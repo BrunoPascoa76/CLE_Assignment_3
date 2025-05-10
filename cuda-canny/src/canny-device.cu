@@ -66,6 +66,10 @@ void convolution(const pixel_t *in, pixel_t *out, const float *kernel,
         }
 }
 
+__global__ void convolution_cuda_kernel(const pixel_t *in, pixel_t *out, const float *kernel, const int nx, const int ny, const int kn) {
+    //TODO: Do kernel
+}
+
 // determines min and max of in image
 void min_max(const pixel_t *in, const int nx, const int ny, pixel_t *pmin, pixel_t *pmax)
 {
@@ -225,11 +229,13 @@ void cannyDevice( const int *h_idata, const int w, const int h,
 {
     const int nx = w;
     const int ny = h;
+    const int conv_kernel_size = 3;
 
     pixel_t *G        = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
     pixel_t *after_Gx = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
     pixel_t *after_Gy = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
     pixel_t *nms      = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
+    
 
     if (G == NULL || after_Gx == NULL || after_Gy == NULL ||
         nms == NULL || h_odata == NULL) {
@@ -241,19 +247,54 @@ void cannyDevice( const int *h_idata, const int w, const int h,
     // Gaussian filter
     gaussian_filter(h_idata, h_odata, nx, ny, sigma);
 
+    
+
+    pixel_t *input=NULL, *output=NULL;
+    float *kernel=NULL;
+
+    cudaSafeCall(cudaMalloc(&input, sizeof(pixel_t) * nx * ny));
+    cudaSafeCall(cudaMalloc(&output, sizeof(pixel_t) * nx * ny));
+    cudaSafeCall(cudaMalloc(&kernel, sizeof(float) * conv_kernel_size * conv_kernel_size));
+
+    dim3 blockDim(16,16);
+    dim3 gridDim((nx + blockDim.x - 1) / blockDim.x, (ny + blockDim.y - 1) / blockDim.y);
+
+    // x gradient convolution
+
     const float Gx[] = {-1, 0, 1,
         -2, 0, 2,
         -1, 0, 1};
 
-    // Gradient along x
-    convolution(h_odata, after_Gx, Gx, nx, ny, 3);
+    //copy image and Gx kernel
+    cudaSafeCall(cudaMemcpy(input,  h_odata, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
+    cudaSafeCall(cudaMemcpy(kernel, Gx,      conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
+    
+    //cal for x direction
+    convolution_cuda_kernel<<<gridDim, blockDim>>>(input, output, kernel, nx, ny, conv_kernel_size);
+
+    cudaCheckMsg("convolution_cuda_kernel X launch failed");
+    cudaSafeCall(cudaDeviceSynchronize());
+
+    //copy over to temporary buffer
+    cudaSafeCall(cudaMemcpy(after_Gx, output, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
     const float Gy[] = { 1, 2, 1,
         0, 0, 0,
         -1,-2,-1};
 
-    // Gradient along y
-    convolution(h_odata, after_Gy, Gy, nx, ny, 3);
+    //launch for y
+    convolution_cuda_kernel<<<gridDim, blockDim>>>(input, output, kernel, nx, ny, conv_kernel_size);
+    cudaCheckMsg("convolution_cuda_kernel Y launch failed");
+    cudaSafeCall(cudaDeviceSynchronize());
+
+    //copy over results
+    cudaSafeCall(cudaMemcpy(after_Gy, output, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
+
+    // Free device memory
+    cudaSafeCall(cudaFree(input));
+    cudaSafeCall(cudaFree(output));
+    cudaSafeCall(cudaFree(kernel));
+
 
     // Merging gradients
     for (int i = 1; i < nx - 1; i++)
