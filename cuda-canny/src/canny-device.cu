@@ -67,7 +67,31 @@ void convolution(const pixel_t *in, pixel_t *out, const float *kernel,
 }
 
 __global__ void convolution_cuda_kernel(const pixel_t *in, pixel_t *out, const float *kernel, const int nx, const int ny, const int kn) {
-    //TODO: Do kernel
+    // get current coordinates
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int khalf = kn / 2;
+
+    if (x >=nx || y>=ny)
+        return; // out of bounds (if image size is not multiple of 16)
+
+    float sum= 0.0f;
+
+    //now do the actual convolution for this pixel
+    for(int ky=-khalf; ky<=khalf; ky++){
+        for(int kx=-khalf; kx<=khalf; kx++){
+            int ix= x+kx;
+            int iy= y+ky;
+
+            if(ix>=0 && ix<nx && iy>=0 && iy<ny){ //if the current kernel point is whithin bounds...
+                float val= in[iy*nx+ix];
+                float weight= kernel[(ky+khalf)*kn+ (kx+khalf)];
+                sum+= val*weight;
+            }
+        }
+    }
+
+    out[y*nx+x]= (pixel_t)sum;
 }
 
 // determines min and max of in image
