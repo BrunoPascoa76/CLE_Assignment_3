@@ -6,3 +6,4 @@
 *.fatbin
 .vscode/*
 canny
+*.pgm
