@@ -315,12 +315,6 @@ void cannyDevice( const int *h_idata, const int w, const int h,
     //copy over results
     cudaSafeCall(cudaMemcpy(after_Gy, output, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
-    // Free device memory
-    cudaSafeCall(cudaFree(input));
-    cudaSafeCall(cudaFree(output));
-    cudaSafeCall(cudaFree(kernel));
-
-
     // Merging gradients
     for (int i = 1; i < nx - 1; i++)
         for (int j = 1; j < ny - 1; j++) {
@@ -341,6 +335,11 @@ void cannyDevice( const int *h_idata, const int w, const int h,
         changed = false;
         hysteresis_edges(nms, h_odata, nx, ny, tmin, &changed);
     } while (changed==true);
+
+    // Free device memory
+    cudaSafeCall(cudaFree(input));
+    cudaSafeCall(cudaFree(output));
+    cudaSafeCall(cudaFree(kernel));
 
     free(after_Gx);
     free(after_Gy);
