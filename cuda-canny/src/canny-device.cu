@@ -244,6 +244,17 @@ void hysteresis_edges(const pixel_t *nms, pixel_t *reference,
     }
 }
 
+__global__ void merge_gradients_kernel(const pixel_t *after_Gx, const pixel_t * after_Gy, pixel_t *G, const int nx, const int ny){
+    int x=blockIdx.x * blockDim.x + threadIdx.x;
+    int y=blockIdx.y * blockDim.y + threadIdx.y;
+
+    if(x < 1 || y < 1 || x >= nx - 1 || y >= ny - 1)
+        return;
+
+    int c= x + y * nx;
+    G[c] = (pixel_t)(hypot((double)(after_Gx[c]), (double)( after_Gy[c]) ));
+}
+
 
 // canny edge detector code to run on the GPU
 void cannyDevice( const int *h_idata, const int w, const int h,
@@ -310,16 +321,17 @@ void cannyDevice( const int *h_idata, const int w, const int h,
     cudaCheckMsg("convolution_cuda_kernel Y launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
 
-    //copy over results
+    
+
+    merge_gradients_kernel<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, nx, ny);
+    cudaDeviceSynchronize();
+
+
+    //copy over results (temp)
     cudaSafeCall(cudaMemcpy(after_Gx, d_Gx, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
     cudaSafeCall(cudaMemcpy(after_Gy, d_Gy, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
-    // Merging gradients
-    for (int i = 1; i < nx - 1; i++)
-        for (int j = 1; j < ny - 1; j++) {
-            const int c = i + nx * j;
-            G[c] = (pixel_t)(hypot((double)(after_Gx[c]), (double)( after_Gy[c]) ));
-        }
+    cudaSafeCall(cudaMemcpy(G, d_G, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
     // Non-maximum suppression, straightforward implementation.
     non_maximum_supression(after_Gx, after_Gy, G, nms, nx, ny);
