@@ -295,26 +295,24 @@ void cannyDevice( const int *h_idata, const int w, const int h,
     cudaSafeCall(cudaMemcpy(kernel, Gx,      conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
     
     //call for x direction
-    convolution_cuda_kernel<<<gridDim, blockDim>>>(input, output, kernel, nx, ny, conv_kernel_size);
+    convolution_cuda_kernel<<<gridDim, blockDim>>>(input, d_Gx, kernel, nx, ny, conv_kernel_size);
 
     cudaCheckMsg("convolution_cuda_kernel X launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
 
-    //copy over to temporary buffer
-    cudaSafeCall(cudaMemcpy(after_Gx, output, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
-    
     const float Gy[] = { 1, 2, 1,
         0, 0, 0,
         -1,-2,-1};
     cudaSafeCall(cudaMemcpy(kernel, Gy, conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
 
-    convolution_cuda_kernel<<<gridDim, blockDim>>>(input, output, kernel, nx, ny, conv_kernel_size);
+    convolution_cuda_kernel<<<gridDim, blockDim>>>(input, d_Gy, kernel, nx, ny, conv_kernel_size);
     cudaCheckMsg("convolution_cuda_kernel Y launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
 
     //copy over results
-    cudaSafeCall(cudaMemcpy(after_Gy, output, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
+    cudaSafeCall(cudaMemcpy(after_Gx, d_Gx, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
+    cudaSafeCall(cudaMemcpy(after_Gy, d_Gy, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
     // Merging gradients
     for (int i = 1; i < nx - 1; i++)
