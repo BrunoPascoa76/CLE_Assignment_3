@@ -259,6 +259,17 @@ void cannyDevice( const int *h_idata, const int w, const int h,
     pixel_t *after_Gx = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
     pixel_t *after_Gy = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
     pixel_t *nms      = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
+
+    pixel_t *input=NULL, *output=NULL, *d_Gx=NULL, *d_Gy=NULL, *d_nms=NULL, *d_G=NULL;
+    float *kernel=NULL;
+
+    cudaSafeCall(cudaMalloc(&input, sizeof(pixel_t) * nx * ny));
+    cudaSafeCall(cudaMalloc(&output, sizeof(pixel_t) * nx * ny));
+    cudaSafeCall(cudaMalloc(&kernel, sizeof(float) * conv_kernel_size * conv_kernel_size));
+    cudaSafeCall(cudaMalloc(&d_G, sizeof(pixel_t) * nx * ny));
+    cudaSafeCall(cudaMalloc(&d_Gx, sizeof(pixel_t) * nx * ny));
+    cudaSafeCall(cudaMalloc(&d_Gy, sizeof(pixel_t) * nx * ny));
+    cudaSafeCall(cudaMalloc(&d_nms, sizeof(pixel_t) * nx * ny));
     
 
     if (G == NULL || after_Gx == NULL || after_Gy == NULL ||
@@ -271,14 +282,7 @@ void cannyDevice( const int *h_idata, const int w, const int h,
     // Gaussian filter
     gaussian_filter(h_idata, h_odata, nx, ny, sigma);
 
-    
-
-    pixel_t *input=NULL, *output=NULL;
-    float *kernel=NULL;
-
-    cudaSafeCall(cudaMalloc(&input, sizeof(pixel_t) * nx * ny));
-    cudaSafeCall(cudaMalloc(&output, sizeof(pixel_t) * nx * ny));
-    cudaSafeCall(cudaMalloc(&kernel, sizeof(float) * conv_kernel_size * conv_kernel_size));
+    cudaSafeCall(cudaMemcpy(input,  h_odata, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
 
     dim3 blockDim(16,16);
     dim3 gridDim((nx + blockDim.x - 1) / blockDim.x, (ny + blockDim.y - 1) / blockDim.y);
@@ -288,9 +292,6 @@ void cannyDevice( const int *h_idata, const int w, const int h,
     const float Gx[] = {-1, 0, 1,
         -2, 0, 2,
         -1, 0, 1};
-
-    //copy image and Gx kernel
-    cudaSafeCall(cudaMemcpy(input,  h_odata, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
     cudaSafeCall(cudaMemcpy(kernel, Gx,      conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
     
     //call for x direction
@@ -302,24 +303,18 @@ void cannyDevice( const int *h_idata, const int w, const int h,
     //copy over to temporary buffer
     cudaSafeCall(cudaMemcpy(after_Gx, output, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
+    
     const float Gy[] = { 1, 2, 1,
         0, 0, 0,
         -1,-2,-1};
-
-    //copy kernel then launch for y
     cudaSafeCall(cudaMemcpy(kernel, Gy, conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
+
     convolution_cuda_kernel<<<gridDim, blockDim>>>(input, output, kernel, nx, ny, conv_kernel_size);
     cudaCheckMsg("convolution_cuda_kernel Y launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
 
     //copy over results
     cudaSafeCall(cudaMemcpy(after_Gy, output, nx*ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
-
-    // Free device memory
-    cudaSafeCall(cudaFree(input));
-    cudaSafeCall(cudaFree(output));
-    cudaSafeCall(cudaFree(kernel));
-
 
     // Merging gradients
     for (int i = 1; i < nx - 1; i++)
@@ -341,6 +336,15 @@ void cannyDevice( const int *h_idata, const int w, const int h,
         changed = false;
         hysteresis_edges(nms, h_odata, nx, ny, tmin, &changed);
     } while (changed==true);
+
+    // Free device memory
+    cudaSafeCall(cudaFree(input));
+    cudaSafeCall(cudaFree(output));
+    cudaSafeCall(cudaFree(kernel));
+    cudaSafeCall(cudaFree(d_G));
+    cudaSafeCall(cudaFree(d_Gx));
+    cudaSafeCall(cudaFree(d_Gy));
+    cudaSafeCall(cudaFree(d_nms));
 
     free(after_Gx);
     free(after_Gy);
