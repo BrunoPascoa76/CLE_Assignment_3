@@ -44,28 +44,6 @@ typedef int pixel_t;
 // include image functions
 #include "image.c"
 
-// convolution of in image to out image using kernel of kn width
-void convolution(const pixel_t *in, pixel_t *out, const float *kernel,
-                 const int nx, const int ny, const int kn)
-{
-    assert(kn % 2 == 1);
-    assert(nx > kn && ny > kn);
-    const int khalf = kn / 2;
-
-    for (int m = khalf; m < nx - khalf; m++)
-        for (int n = khalf; n < ny - khalf; n++) {
-            float pixel = 0.0;
-            size_t c = 0;
-            for (int j = -khalf; j <= khalf; j++)
-                for (int i = -khalf; i <= khalf; i++) {
-                    pixel += in[(n - j) * nx + m - i] * kernel[c];
-                    c++;
-                }
-
-            out[n * nx + m] = (pixel_t)pixel;
-        }
-}
-
 __global__ void convolution_cuda_kernel(const pixel_t *in, pixel_t *out, const float *kernel, const int nx, const int ny, const int kn) {
     // get current coordinates
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -92,6 +70,10 @@ __global__ void convolution_cuda_kernel(const pixel_t *in, pixel_t *out, const f
     }
 
     out[y*nx+x]= (pixel_t)sum;
+}
+
+__global__ void merge_gradients_kernel(const pixel_t *Gx, const pixel_t *Gy, pixel_t *nms, const int nx, const int ny) {
+    
 }
 
 // determines min and max of in image
@@ -138,7 +120,7 @@ void normalize(  pixel_t *inout,
  * 2.5 <= sigma < 3.0 : 13 ...
  * kernelSize = 2 * int(2*sigma) + 3;
  */
-void gaussian_filter(const pixel_t *in, pixel_t *out,
+void gaussian_filter(const pixel_t *in, pixel_t *out, const pixel_t *d_in, pixel_t *d_out,
                      const int nx, const int ny, const float sigma)
 {
     const int n = 2 * (int)(2 * sigma) + 3;
@@ -156,10 +138,24 @@ void gaussian_filter(const pixel_t *in, pixel_t *out,
             c++;
         }
 
-    convolution(in, out, kernel, nx, ny, n);
+    float *d_kernel=NULL;
+
+    cudaSafeCall(cudaMalloc(&d_kernel, n * n * sizeof(float)));
+    cudaSafeCall(cudaMemcpy(d_kernel, kernel, n * n * sizeof(float), cudaMemcpyHostToDevice));
+
+    dim3 blockDim(16, 16);
+    dim3 gridDim((nx + blockDim.x - 1) / blockDim.x, (ny + blockDim.y - 1) / blockDim.y);
+
+    convolution_cuda_kernel<<<gridDim, blockDim>>>(d_in, d_out, d_kernel, nx, ny, n);(in, out, kernel, nx, ny, n);
     pixel_t max, min;
+    cudaCheckMsg("convolution_cuda_kernel (Gaussian) launch failed");
+    cudaSafeCall(cudaDeviceSynchronize());
+
+    //TODO: "cuda-fy" normalize
     min_max(out, nx, ny, &min, &max);
     normalize(out, nx, ny, n, min, max);
+
+    cudaSafeCall(cudaFree(d_kernel));
 }
 
 // Canny non-maximum suppression
@@ -273,12 +269,13 @@ void cannyDevice( const int *h_idata, const int w, const int h,
 
     
 
-    pixel_t *input=NULL, *output=NULL;
+    pixel_t *input=NULL, *output=NULL, *d_G=NULL;
     float *kernel=NULL;
 
     cudaSafeCall(cudaMalloc(&input, sizeof(pixel_t) * nx * ny));
     cudaSafeCall(cudaMalloc(&output, sizeof(pixel_t) * nx * ny));
     cudaSafeCall(cudaMalloc(&kernel, sizeof(float) * conv_kernel_size * conv_kernel_size));
+    cudaSafeCall(cudaMalloc(&d_G, sizeof(pixel_t) * nx * ny));
 
     dim3 blockDim(16,16);
     dim3 gridDim((nx + blockDim.x - 1) / blockDim.x, (ny + blockDim.y - 1) / blockDim.y);
