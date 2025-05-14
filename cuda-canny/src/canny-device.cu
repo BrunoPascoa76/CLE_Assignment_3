@@ -269,6 +269,25 @@ void first_edges(const pixel_t *nms, pixel_t *reference,
     }
 }
 
+// CUDA kernel to find edges in first pass for nms > tmax
+__global__ void first_edges_kernel(const pixel_t *nms, pixel_t *reference,
+                                  const int nx, const int ny, const int tmax)
+{
+    // Calculate the global thread index
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    // Check if within image bounds and not on the border
+    if (x > 0 && x < nx - 1 && y > 0 && y < ny - 1) {
+        int idx = y * nx + x;
+        
+        // Same logic as CPU version: if nms >= tmax, mark as edge
+        if (nms[idx] >= tmax) {
+            reference[idx] = MAX_BRIGHTNESS;
+        }
+    }
+}
+
 // edges found in after first passes for nms > tmin && neighbor is edge
 void hysteresis_edges(const pixel_t *nms, pixel_t *reference,
                       const int nx, const int ny, const int tmin, bool *pchanged)
@@ -315,110 +334,96 @@ __global__ void merge_gradients_kernel(const pixel_t *after_Gx, const pixel_t *a
     G[c] = (pixel_t)(hypot((double)(after_Gx[c]), (double)(after_Gy[c])));
 }
 
-// canny edge detector code to run on the GPU
+// This function should be placed in the canny-device.cu file
 void cannyDevice(const int *h_idata, const int w, const int h,
-                 const int tmin, const int tmax,
-                 const float sigma,
-                 int *h_odata)
+                const int tmin, const int tmax, const float sigma,
+                int *h_odata)
 {
     const int nx = w;
     const int ny = h;
-    const int conv_kernel_size = 3;
-
-    pixel_t *G = (pixel_t *)calloc(nx * ny, sizeof(pixel_t));
-    pixel_t *after_Gx = (pixel_t *)calloc(nx * ny, sizeof(pixel_t));
-    pixel_t *after_Gy = (pixel_t *)calloc(nx * ny, sizeof(pixel_t));
-    pixel_t *nms = (pixel_t *)calloc(nx * ny, sizeof(pixel_t));
-
-    pixel_t *input = NULL, *output = NULL, *d_Gx = NULL, *d_Gy = NULL, *d_nms = NULL, *d_G = NULL;
-    float *kernel = NULL;
-
-    cudaSafeCall(cudaMalloc(&input, sizeof(pixel_t) * nx * ny));
-    cudaSafeCall(cudaMalloc(&output, sizeof(pixel_t) * nx * ny));
-    cudaSafeCall(cudaMalloc(&kernel, sizeof(float) * conv_kernel_size * conv_kernel_size));
-    cudaSafeCall(cudaMalloc(&d_G, sizeof(pixel_t) * nx * ny));
-    cudaSafeCall(cudaMalloc(&d_Gx, sizeof(pixel_t) * nx * ny));
-    cudaSafeCall(cudaMalloc(&d_Gy, sizeof(pixel_t) * nx * ny));
-    cudaSafeCall(cudaMalloc(&d_nms, sizeof(pixel_t) * nx * ny));
-
+    
+    // Allocate host memory for temporary arrays
+    pixel_t *G = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
+    pixel_t *after_Gx = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
+    pixel_t *after_Gy = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
+    pixel_t *nms = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
+    pixel_t *temp_output = (pixel_t *) calloc(nx * ny, sizeof(pixel_t));
+    
     if (G == NULL || after_Gx == NULL || after_Gy == NULL ||
-        nms == NULL || h_odata == NULL)
-    {
-        fprintf(stderr, "canny_edge_detection:"
-                        " Failed memory allocation(s).\n");
+        nms == NULL || temp_output == NULL) {
+        fprintf(stderr, "cannyDevice: Failed memory allocation(s).\n");
         exit(1);
     }
-
-    // Gaussian filter
-    gaussian_filter(h_idata, h_odata, nx, ny, sigma);
-
-    cudaSafeCall(cudaMemcpy(input, h_odata, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
-
-    dim3 blockDim(16, 16);
-    dim3 gridDim((nx + blockDim.x - 1) / blockDim.x, (ny + blockDim.y - 1) / blockDim.y);
-
-    // x gradient convolution
-
+    
+    // Step 1: Gaussian filter - Using CPU
+    gaussian_filter(h_idata, temp_output, nx, ny, sigma);
+    
+    // Define Sobel operators
     const float Gx[] = {-1, 0, 1,
-                        -2, 0, 2,
-                        -1, 0, 1};
-    cudaSafeCall(cudaMemcpy(kernel, Gx, conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
-
-    // call for x direction
-    convolution_cuda_kernel<<<gridDim, blockDim>>>(input, d_Gx, kernel, nx, ny, conv_kernel_size);
-
-    cudaCheckMsg("convolution_cuda_kernel X launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
-
-    const float Gy[] = {1, 2, 1,
-                        0, 0, 0,
-                        -1, -2, -1};
-    cudaSafeCall(cudaMemcpy(kernel, Gy, conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
-
-    convolution_cuda_kernel<<<gridDim, blockDim>>>(input, d_Gy, kernel, nx, ny, conv_kernel_size);
-    cudaCheckMsg("convolution_cuda_kernel Y launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
-
-    merge_gradients_kernel<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, nx, ny);
-    cudaCheckMsg("merge_gradients_kernel launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
-
-    // copy over results (temp)
-    cudaSafeCall(cudaMemcpy(after_Gx, d_Gx, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
-    cudaSafeCall(cudaMemcpy(after_Gy, d_Gy, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
-
-    cudaSafeCall(cudaMemcpy(G, d_G, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
-
-    non_maximum_suppression_kernel<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, d_nms, nx, ny);
-    cudaCheckMsg("non_maximum_suppression_kernel launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
-
-    cudaSafeCall(cudaMemcpy(nms, d_nms, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
-
-
-    // edges with nms >= tmax
-    memset(h_odata, 0, sizeof(pixel_t) * nx * ny);
-    first_edges(nms, h_odata, nx, ny, tmax);
-
-    // edges with nms >= tmin && neighbor is edge
+                         -2, 0, 2,
+                         -1, 0, 1};
+    
+    // Step 2: Gradient along x - Using CPU
+    convolution(temp_output, after_Gx, Gx, nx, ny, 3);
+    
+    const float Gy[] = { 1, 2, 1,
+                          0, 0, 0,
+                         -1,-2,-1};
+    
+    // Step 3: Gradient along y - Using CPU
+    convolution(temp_output, after_Gy, Gy, nx, ny, 3);
+    
+    // Step 4: Compute gradient magnitude - Using CPU
+    for (int i = 1; i < nx - 1; i++)
+        for (int j = 1; j < ny - 1; j++) {
+            const int c = i + nx * j;
+            G[c] = (pixel_t)(hypot((double)(after_Gx[c]), (double)(after_Gy[c])));
+        }
+    
+    // Step 5: Non-maximum suppression - Using CPU
+    non_maximum_supression(after_Gx, after_Gy, G, nms, nx, ny);
+    
+    // Step 6: First edges detection - USING GPU
+    
+    // Allocate device memory
+    pixel_t *d_nms, *d_reference;
+    cudaSafeCall(cudaMalloc((void **)&d_nms, nx * ny * sizeof(pixel_t)));
+    cudaSafeCall(cudaMalloc((void **)&d_reference, nx * ny * sizeof(pixel_t)));
+    
+    // Copy data from host to device - only copy nms, which is needed for the GPU computation
+    cudaSafeCall(cudaMemcpy(d_nms, nms, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
+    
+    // Initialize d_reference with zeros
+    cudaSafeCall(cudaMemset(d_reference, 0, nx * ny * sizeof(pixel_t)));
+    
+    // Define grid and block dimensions - 16x16 is a good trade-off for most GPUs
+    dim3 blockSize(16, 16);
+    dim3 gridSize((nx + blockSize.x - 1) / blockSize.x, (ny + blockSize.y - 1) / blockSize.y);
+    
+    // Launch the kernel
+    first_edges_kernel<<<gridSize, blockSize>>>(d_nms, d_reference, nx, ny, tmax);
+    
+    // Check for kernel errors
+    cudaCheckMsg("first_edges launch failed");
+    
+    // Copy results back to host - initialize h_odata with the result from first_edges
+    cudaSafeCall(cudaMemcpy(h_odata, d_reference, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
+    
+    // Step 7: Hysteresis edges - Using CPU
     bool changed;
-    do
-    {
+    do {
         changed = false;
         hysteresis_edges(nms, h_odata, nx, ny, tmin, &changed);
-    } while (changed == true);
-
+    } while (changed);
+    
     // Free device memory
-    cudaSafeCall(cudaFree(input));
-    cudaSafeCall(cudaFree(output));
-    cudaSafeCall(cudaFree(kernel));
-    cudaSafeCall(cudaFree(d_G));
-    cudaSafeCall(cudaFree(d_Gx));
-    cudaSafeCall(cudaFree(d_Gy));
-    cudaSafeCall(cudaFree(d_nms));
-
+    cudaFree(d_nms);
+    cudaFree(d_reference);
+    
+    // Free host memory
     free(after_Gx);
     free(after_Gy);
     free(G);
     free(nms);
+    free(temp_output);
 }
