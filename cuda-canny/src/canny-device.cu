@@ -240,6 +240,17 @@ void normalize(pixel_t *inout,
         }
 }
 
+__global__ void normalize_kernel(pixel_t *inout, const int nx, const int ny, const int kn, const int min, const int max) {
+    const int khalf = kn / 2;
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x < khalf || x >= nx - khalf || y < khalf || y >= ny - khalf)
+        return; // out of bounds (if image size is not multiple of 16)
+
+    inout[y*nx+x]=MAX_BRIGHTNESS * ((int)inout[y*nx+x] - (float)min) / ((float)max - (float)min);
+}
+
 /*
  * gaussianFilter:
  * http://www.songho.ca/dsp/cannyedge/cannyedge.html
@@ -317,6 +328,12 @@ void gaussian_filter_device(pixel_t *in,
     int min, max;
     
     min_max_cuda(in, nx, ny, &min, &max);
+    cudaCheckMsg("min_max_cuda launch failed");
+    cudaSafeCall(cudaDeviceSynchronize());
+
+    normalize_kernel<<<grid, block>>>(in, nx, ny, n, min, max);
+    cudaCheckMsg("normalize_kernel launch failed");
+    cudaSafeCall(cudaDeviceSynchronize());
     
 
     cudaSafeCall(cudaFree(d_temp));
@@ -532,12 +549,6 @@ void cannyDevice(const int *h_idata, const int w, const int h,
     merge_gradients_kernel<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, nx, ny);
     cudaCheckMsg("merge_gradients_kernel launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
-
-    // copy over results (temp)
-    cudaSafeCall(cudaMemcpy(after_Gx, d_Gx, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
-    cudaSafeCall(cudaMemcpy(after_Gy, d_Gy, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
-
-    cudaSafeCall(cudaMemcpy(G, d_G, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
     non_maximum_suppression_kernel<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, d_nms, nx, ny);
     cudaCheckMsg("non_maximum_suppression_kernel launch failed");
