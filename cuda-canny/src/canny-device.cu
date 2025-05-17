@@ -179,10 +179,30 @@ void min_max_cuda(const pixel_t *in, const int nx, const int ny, int* min_val, i
     cudaSafeCall(cudaMalloc(&bmins, gridSize.x*sizeof(int)));
     cudaSafeCall(cudaMalloc(&bmaxs, gridSize.x*sizeof(int)));
 
+    int* h_bmins = (int*)malloc(gridSize.x * sizeof(int));
+    int* h_bmaxs = (int*)malloc(gridSize.x * sizeof(int));
+
     min_max_kernel<<<gridSize, dimBlock, 2*dimBlock.x*sizeof(int)>>>(in, bmins, bmaxs, totpixels);
     cudaCheckMsg("min_max_kernel launch failed");
 
-    //now just need to copy back and compare on the cpu
+    cudaSafeCall(cudaMemcpy(h_bmins, bmins, gridSize.x*sizeof(int), cudaMemcpyDeviceToHost));
+    cudaSafeCall(cudaMemcpy(h_bmaxs, bmaxs, gridSize.x*sizeof(int), cudaMemcpyDeviceToHost));
+
+    *min_val = INT_MAX;
+    *max_val = -INT_MAX;
+
+    //just compare between blocks in the host itself
+    for (int i = 0; i < gridSize.x; i++) {
+        if (h_bmins[i] < *min_val)
+            *min_val = h_bmins[i];
+        if (h_bmaxs[i] > *max_val)
+            *max_val = h_bmaxs[i];
+    }
+
+    cudaSafeCall(cudaFree(bmins));
+    cudaSafeCall(cudaFree(bmaxs));
+    free(h_bmins);
+    free(h_bmaxs);
 }
 
 
@@ -275,10 +295,10 @@ void gaussian_filter_device(pixel_t *in,
         kernel[i] /= sum;
 
     pixel_t* d_temp;
-    cudaMalloc(&d_temp, nx * ny * sizeof(pixel_t));
+    cudaSafeCall(cudaMalloc(&d_temp, nx * ny * sizeof(pixel_t)));
 
     float* d_kernel;
-    cudaMalloc(&d_kernel, n * sizeof(float));
+    cudaSafeCall(cudaMalloc(&d_kernel, n * sizeof(float)));
 
     //copy over kernel
     cudaSafeCall(cudaMemcpy(d_kernel, kernel, n * sizeof(float), cudaMemcpyHostToDevice));
@@ -293,8 +313,11 @@ void gaussian_filter_device(pixel_t *in,
     convolution_1d_cols<<<grid, block>>>(d_temp, in, d_kernel, nx, ny, n);
     cudaCheckMsg("vertical_convolution_kernel launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
+
+    int min, max;
     
-    //TODO: add minmax and normalize
+    min_max_cuda(in, nx, ny, &min, &max);
+    
 
     cudaSafeCall(cudaFree(d_temp));
     cudaSafeCall(cudaFree(d_kernel));
@@ -476,12 +499,10 @@ void cannyDevice(const int *h_idata, const int w, const int h,
         exit(1);
     }
 
-    cudaSafeCall(cudaMemcpy(input, h_odata, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
-
+    cudaSafeCall(cudaMemcpy(input, h_idata, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
 
     // Gaussian filter
-    gaussian_filter(h_idata, h_odata, nx, ny, sigma);
-
+    gaussian_filter_device(input, nx, ny, sigma);
 
     dim3 blockDim(16, 16);
     dim3 gridDim((nx + blockDim.x - 1) / blockDim.x, (ny + blockDim.y - 1) / blockDim.y);
