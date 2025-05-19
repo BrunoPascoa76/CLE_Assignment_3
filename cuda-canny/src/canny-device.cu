@@ -184,6 +184,18 @@ __global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixe
     atomicMax(pmax, in[y * nx + x]);
 }
 
+__global__ void normalize_cuda(pixel_t *inout, const int nx, const int ny, const int kn, const int min, const int max){
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    const int khalf = kn / 2;
+
+    if(x < khalf || y < khalf || x >= nx - khalf || y >= ny - khalf)
+        return;
+
+    inout[y*nx+x] = MAX_BRIGHTNESS * ((int)inout[y*nx+x] - (float)min) / ((float)max - (float)min);
+}
+
 void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
                           const int nx, const int ny, const float sigma){ //this is still on host (it was just to visually separate the more complex gaussian from the host)
     const int n = 2 * (int)(2 * sigma) + 3;
