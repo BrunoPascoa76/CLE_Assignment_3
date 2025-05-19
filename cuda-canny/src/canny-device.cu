@@ -192,7 +192,7 @@ __global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixe
     __syncthreads();
     
 
-    for(int s=blockDim.x/2; s>0;s>>=1){ //parallel reduction (if doing atomicmin/max has too much contention, we simply reduce the number of values)
+    for(int s=(blockDim.x * blockDim.y) / 2; s>0;s>>=1){ //parallel reduction (if doing atomicmin/max has too much contention, we simply reduce the number of values)
         if(tid < s){
             smin[tid]=min(smin[tid],smin[tid+s]);
             smax[tid]=max(smax[tid],smax[tid+s]);
