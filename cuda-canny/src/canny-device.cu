@@ -226,20 +226,20 @@ void cannyDevice(const int *h_idata, const int w, const int h,
 
 
     const float mean = (float)floor(gaussian_kernel_size / 2.0);
-    float kernel[gaussian_kernel_size * gaussian_kernel_size]; // variable length array
+    float h_g_kernel[gaussian_kernel_size * gaussian_kernel_size]; // variable length array
 
     size_t c = 0;
     //we can calculate the kernel directly on the cpu, it's fine
     for (int i = 0; i < gaussian_kernel_size; i++)
         for (int j = 0; j < gaussian_kernel_size; j++)
         {
-            kernel[c] = exp(-0.5 * (pow((i - mean) / sigma, 2.0) +
+            h_g_kernel[c] = exp(-0.5 * (pow((i - mean) / sigma, 2.0) +
                                     pow((j - mean) / sigma, 2.0))) /
                         (2 * M_PI * sigma * sigma);
             c++;
         }
     
-    cudaSafeCall(cudaMemcpy(g_kernel, kernel, gaussian_kernel_size * gaussian_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
+    cudaSafeCall(cudaMemcpy(g_kernel, h_g_kernel, gaussian_kernel_size * gaussian_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
 
     convolution_cuda_kernel<<<gridDim, blockDim>>>(input, output, g_kernel, nx, ny, gaussian_kernel_size);
     cudaCheckMsg("convolution_cuda_kernel launch failed");
