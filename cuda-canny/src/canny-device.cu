@@ -196,7 +196,7 @@ void gaussian_filter_device(pixel_t *in,
 {
     const int n = 2 * (int)(2 * sigma) + 3;
     const float mean = (n - 1) / 2.0f;
-    float kernel[n]; //in theory switching from 1 pass of a 2d kernel to 2 passes of a 1d kernel
+    float kernel[n*n]; //in theory switching from 1 pass of a 2d kernel to 2 passes of a 1d kernel
     float sum=0.0f;
 
     size_t c = 0;
