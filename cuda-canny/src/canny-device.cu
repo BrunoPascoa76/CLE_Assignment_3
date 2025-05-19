@@ -487,6 +487,7 @@ void cannyDevice(const int *h_idata, const int w, const int h,
     // edges with nms >= tmax
     memset(h_odata, 0, sizeof(pixel_t) * nx * ny);
     first_edges(nms, h_odata, nx, ny, tmax);
+    /*
 
     // edges with nms >= tmin && neighbor is edge
     bool changed;
@@ -495,6 +496,8 @@ void cannyDevice(const int *h_idata, const int w, const int h,
         changed = false;
         hysteresis_edges(nms, h_odata, nx, ny, tmin, &changed);
     } while (changed == true);
+
+    */
     
 
     // Free device memory
