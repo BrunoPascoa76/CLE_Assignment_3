@@ -217,7 +217,8 @@ __global__ void normalize_cuda(pixel_t *inout, const int nx, const int ny, const
     if(x < khalf || y < khalf || x >= nx - khalf || y >= ny - khalf)
         return;
 
-    //inout[y*nx+x] = MAX_BRIGHTNESS * ((int)inout[y*nx+x] - min) / (denom);
+    pixel_t pixel= MAX_BRIGHTNESS * ((int)inout[y*nx+x] - min) / (denom);
+    inout[y*nx+x]=pixel;
 }
 
 void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
