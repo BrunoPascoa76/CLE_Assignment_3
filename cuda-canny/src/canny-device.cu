@@ -184,7 +184,7 @@ __global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixe
     atomicMax(pmax, in[y * nx + x]);
 }
 
-__global__ void normalize_cuda(pixel_t *inout, const int nx, const int ny, const int kn, const int min, const int max){
+__global__ void normalize_cuda(pixel_t *inout, const int nx, const int ny, const int kn, const int *min, const int *max){
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -228,6 +228,9 @@ void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
 
     cudaSafeCall(cudaMalloc(&max, sizeof(pixel_t)));
     cudaSafeCall(cudaMalloc(&min, sizeof(pixel_t)));
+
+    cudaSafeCall(cudaMemset(max, -INT_MAX, sizeof(pixel_t)));
+    cudaSafeCall(cudaMemset(min, INT_MAX, sizeof(pixel_t)));
 
     min_max_cuda<<<block,grid>>>(out, nx, ny, min, max);
 
