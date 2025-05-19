@@ -385,7 +385,7 @@ void cannyDevice(const int *h_idata, const int w, const int h,
     cudaSafeCall(cudaMemcpy(input, h_idata, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
 
     // Gaussian filter
-    gaussian_filter_device(input,output, nx, ny, sigma);
+    gaussian_filter_cuda(input,output, nx, ny, sigma);
 
 
     dim3 blockDim(16, 16);
