@@ -173,7 +173,7 @@ void gaussian_filter(const pixel_t *in, pixel_t *out,
     normalize(out, nx, ny, n, min, max);
 }
 
-__global__ void block_wise_min_max_cuda(const pixel_t *in, const int nx, const int ny, pixel_t *min, pixel_t *max){
+__global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixel_t *min, pixel_t *max){
     extern __shared__ pixel_t sdata[];
 
     pixel_t *smin = sdata; //get the pointers for the min and max positions
