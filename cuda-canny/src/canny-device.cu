@@ -184,7 +184,7 @@ __global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixe
     atomicMax(pmax, in[y * nx + x]);
 }
 
-__global__ void normalize_cuda(pixel_t *inout, const int nx, const int ny, const int kn, const float *min, const float *max){
+__global__ void normalize_cuda(pixel_t *inout, const int nx, const int ny, const int kn, const pixel_t *min, const pixel_t *max){
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
