@@ -431,7 +431,7 @@ void cannyDevice(const int *h_idata, const int w, const int h,
     cudaSafeCall(cudaMemcpy(kernel, Gx, conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
 
     // call for x direction
-    convolution_cuda_kernel<<<gridDim, blockDim>>>(input, d_Gx, kernel, nx, ny, conv_kernel_size);
+    convolution_cuda_kernel<<<gridDim, blockDim>>>(output, d_Gx, kernel, nx, ny, conv_kernel_size);
 
     cudaCheckMsg("convolution_cuda_kernel X launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
@@ -441,7 +441,7 @@ void cannyDevice(const int *h_idata, const int w, const int h,
                         -1, -2, -1};
     cudaSafeCall(cudaMemcpy(kernel, Gy, conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
 
-    convolution_cuda_kernel<<<gridDim, blockDim>>>(input, d_Gy, kernel, nx, ny, conv_kernel_size);
+    convolution_cuda_kernel<<<gridDim, blockDim>>>(output, d_Gy, kernel, nx, ny, conv_kernel_size);
     cudaCheckMsg("convolution_cuda_kernel Y launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
 
