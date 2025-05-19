@@ -77,8 +77,8 @@ __global__ void convolution_cuda_kernel(const pixel_t *in, pixel_t *out, const f
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     int khalf = kn / 2;
 
-    if (x >= nx || y >= ny)
-        return; // out of bounds (if image size is not multiple of 16)
+    if(x < khalf || y < khalf || x >= nx - khalf || y >= ny - khalf)
+        return; // the borders weren't touched in the cpu version, so trying to replicate that
 
     float sum = 0.0f;
 
