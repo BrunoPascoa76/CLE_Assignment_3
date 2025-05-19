@@ -213,10 +213,10 @@ void gaussian_filter_device(pixel_t *in,
     cudaSafeCall(cudaMalloc(&d_temp, nx * ny * sizeof(pixel_t)));
 
     float* d_kernel;
-    cudaSafeCall(cudaMalloc(&d_kernel, n * sizeof(float)));
+    cudaSafeCall(cudaMalloc(&d_kernel, n * n * sizeof(float)));
 
     //copy over kernel
-    cudaSafeCall(cudaMemcpy(d_kernel, kernel, n * sizeof(float), cudaMemcpyHostToDevice));
+    cudaSafeCall(cudaMemcpy(d_kernel, kernel, n * n * sizeof(float), cudaMemcpyHostToDevice));
 
     dim3 block(16, 16);
     dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
