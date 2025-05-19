@@ -222,17 +222,17 @@ void gaussian_filter_device(pixel_t *in,
 
     convolution_1d_rows<<<grid, block>>>(in, d_temp, d_kernel, nx, ny, n);
     cudaCheckMsg("horizontal_convolution_kernel launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
+    //cudaSafeCall(cudaDeviceSynchronize());
 
     convolution_1d_cols<<<grid, block>>>(d_temp, in, d_kernel, nx, ny, n);
     cudaCheckMsg("vertical_convolution_kernel launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
+    //cudaSafeCall(cudaDeviceSynchronize());
 
     int min, max;
     
     min_max_cuda(in, nx, ny, &min, &max);
     cudaCheckMsg("min_max_cuda launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
+    //cudaSafeCall(cudaDeviceSynchronize());
 
     normalize_kernel<<<grid, block>>>(in, nx, ny, n, min, max);
     cudaCheckMsg("normalize_kernel launch failed");
