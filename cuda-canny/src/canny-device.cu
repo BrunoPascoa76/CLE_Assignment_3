@@ -218,12 +218,15 @@ void gaussian_filter_device(pixel_t *in,
     //copy over kernel
     cudaSafeCall(cudaMemcpy(d_kernel, kernel, n * sizeof(float), cudaMemcpyHostToDevice));
 
-    dim3 block(16, 16);
-    dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
+    dim3 block(256,1);
+    dim3 grid((nx + block.x - 1) / block.x, 1);
 
     convolution_1d_cols<<<grid, block>>>(in, d_temp, d_kernel, nx, ny, n);
     cudaCheckMsg("horizontal_convolution_kernel launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
+
+    block=dim3(1,256);
+    grid=dim3(1,(ny + block.y - 1) / block.y);
 
     convolution_1d_rows<<<grid, block>>>(d_temp, in, d_kernel, nx, ny, n);
     cudaCheckMsg("vertical_convolution_kernel launch failed");
