@@ -463,7 +463,7 @@ void cannyDevice(const int *h_idata, const int w, const int h,
     convolution_cuda_kernel<<<gridDim, blockDim>>>(output, d_Gx, kernel, nx, ny, conv_kernel_size);
 
     cudaCheckMsg("convolution_cuda_kernel X launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
+    //cudaSafeCall(cudaDeviceSynchronize());
 
     const float Gy[] = {1, 2, 1,
                         0, 0, 0,
@@ -472,15 +472,15 @@ void cannyDevice(const int *h_idata, const int w, const int h,
 
     convolution_cuda_kernel<<<gridDim, blockDim>>>(output, d_Gy, kernel, nx, ny, conv_kernel_size);
     cudaCheckMsg("convolution_cuda_kernel Y launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
+    //cudaSafeCall(cudaDeviceSynchronize());
 
     merge_gradients_kernel<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, nx, ny);
     cudaCheckMsg("merge_gradients_kernel launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
+    //cudaSafeCall(cudaDeviceSynchronize());
 
     non_maximum_suppression_kernel<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, d_nms, nx, ny);
     cudaCheckMsg("non_maximum_suppression_kernel launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
+    //cudaSafeCall(cudaDeviceSynchronize());
 
     cudaSafeCall(cudaMemcpy(nms, d_nms, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
