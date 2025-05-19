@@ -199,7 +199,7 @@ void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
     size3 block(16,16);
     size3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
 
-    convolution_kernel<<<grid, block>>>(in, out, d_kernel, nx, ny, n);
+    convolution_cuda_kernel<<<grid, block>>>(in, out, d_kernel, nx, ny, n);
 
     pixel_t max, min;
     min_max(out, nx, ny, &min, &max);
