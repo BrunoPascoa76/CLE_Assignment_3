@@ -196,10 +196,9 @@ void gaussian_filter_device(pixel_t *in,
 {
     const int n = 2 * (int)(2 * sigma) + 3;
     const float mean = (n - 1) / 2.0f;
-    float kernel[n]; //in theory switching from 1 pass of a 2d kernel to 2 passes of a 1d kernel. In practive, however it did not work (perhaps it had poor cache utilization)
+    float kernel[n]; //in theory switching from 1 pass of a 2d kernel to 2 passes of a 1d kernel
     float sum=0.0f;
 
-    size_t c = 0;
     for(int i=0;i<n;i++){
         float x=i-mean;
         kernel[i]=expf(-0.5f * (x * x) / (sigma * sigma));
@@ -218,15 +217,12 @@ void gaussian_filter_device(pixel_t *in,
     //copy over kernel
     cudaSafeCall(cudaMemcpy(d_kernel, kernel, n * sizeof(float), cudaMemcpyHostToDevice));
 
-    dim3 block(256,1);
-    dim3 grid((nx + block.x - 1) / block.x, 1);
+    dim3 block(16, 16);
+    dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
 
     convolution_1d_rows<<<grid, block>>>(in, d_temp, d_kernel, nx, ny, n);
     cudaCheckMsg("horizontal_convolution_kernel launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
-
-    block=dim3(1,256);
-    grid=dim3(1,(ny + block.y - 1) / block.y);
 
     convolution_1d_cols<<<grid, block>>>(d_temp, in, d_kernel, nx, ny, n);
     cudaCheckMsg("vertical_convolution_kernel launch failed");
@@ -241,6 +237,7 @@ void gaussian_filter_device(pixel_t *in,
     normalize_kernel<<<grid, block>>>(in, nx, ny, n, min, max);
     cudaCheckMsg("normalize_kernel launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
+    
 
     cudaSafeCall(cudaFree(d_temp));
     cudaSafeCall(cudaFree(d_kernel));
