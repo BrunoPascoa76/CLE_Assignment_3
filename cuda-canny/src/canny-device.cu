@@ -235,7 +235,7 @@ void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
 
     min_max_cuda<<<block,grid>>>(out, nx, ny, d_min, d_max);
 
-    normalize_cuda<<<block,grid>>>(out, nx, ny, n, d_min, d_max);
+    //normalize_cuda<<<block,grid>>>(out, nx, ny, n, d_min, d_max);
 }
 
 __global__ void non_maximum_suppression_kernel(const pixel_t *after_Gx, const pixel_t *after_Gy, const pixel_t *G, pixel_t *nms, const int nx, const int ny)
