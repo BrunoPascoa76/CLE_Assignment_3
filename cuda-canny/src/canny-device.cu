@@ -486,8 +486,6 @@ void cannyDevice(const int *h_idata, const int w, const int h,
 
     cudaSafeCall(cudaMemcpy(nms, d_nms, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
-    /*
-
     // edges with nms >= tmax
     memset(h_odata, 0, sizeof(pixel_t) * nx * ny);
     first_edges(nms, h_odata, nx, ny, tmax);
@@ -499,8 +497,7 @@ void cannyDevice(const int *h_idata, const int w, const int h,
         changed = false;
         hysteresis_edges(nms, h_odata, nx, ny, tmin, &changed);
     } while (changed == true);
-
-    */
+    
 
     // Free device memory
     cudaSafeCall(cudaFree(input));
