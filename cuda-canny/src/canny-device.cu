@@ -224,13 +224,14 @@ void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
 
     convolution_cuda_kernel<<<grid, block>>>(in, out, d_kernel, nx, ny, n);
 
-    pixel_t *max, *min;
+    pixel_t *d_max, *d_min;
+    pixel_t max=-INT_MAX, min=INT_MAX;
 
-    cudaSafeCall(cudaMalloc(&max, sizeof(pixel_t)));
-    cudaSafeCall(cudaMalloc(&min, sizeof(pixel_t)));
+    cudaSafeCall(cudaMalloc(&d_max, sizeof(pixel_t)));
+    cudaSafeCall(cudaMalloc(&d_min, sizeof(pixel_t)));
 
-    cudaSafeCall(cudaMemset(max, (pixel_t)(-INT_MAX), sizeof(pixel_t)));
-    cudaSafeCall(cudaMemset(min, (pixel_t)(INT_MAX), sizeof(pixel_t)));
+    cudaSafeCall(cudaMemcpy(d_max, &max, sizeof(pixel_t), cudaMemcpyHostToDevice));
+    cudaSafeCall(cudaMemcpy(d_min, &min, sizeof(pixel_t), cudaMemcpyHostToDevice));
 
     min_max_cuda<<<block,grid>>>(out, nx, ny, min, max);
 
