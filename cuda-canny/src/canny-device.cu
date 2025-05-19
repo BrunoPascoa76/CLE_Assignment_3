@@ -173,15 +173,37 @@ void gaussian_filter(const pixel_t *in, pixel_t *out,
     normalize(out, nx, ny, n, min, max);
 }
 
-__global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixel_t *pmin, pixel_t *pmax){
+__global__ void block_wise_min_max_cuda(const pixel_t *in, const int nx, const int ny, pixel_t *min, pixel_t *max){
+    extern __shared__ pixel_t sdata[];
+
+    pixel_t *smin = sdata; //get the pointers for the min and max positions
+    pixel_t *smax = &sdata[blockDim.x*blockDim.y];
+
+    int tid=threadIdx.y*blockDim.x+threadIdx.x;
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
     if(x >= nx || y >= ny)
         return;
+        
+    pixel_t val = in[y * nx + x];
+    smin[tid]=val;
+    smax[tid]=val;
+    __syncthreads();
+    
 
-    atomicMin(pmin, in[y * nx + x]);
-    atomicMax(pmax, in[y * nx + x]);
+    for(int s=blockDim.x/2; s>0;s>>=1){ //parallel reduction (if doing atomicmin/max has too much contention, we simply reduce the number of values)
+        if(tid < s){
+            smin[tid]=min(smin[tid],smin[tid+s]);
+            smax[tid]=max(smax[tid],smax[tid+s]);
+        }
+        __syncthreads();
+    }
+
+    if(tid == 0){ //now we only need to do atomicmin/max once per block (if it's still too much, I'll then do blockwise, but not for now)
+        atomicMin(min, smin[0]);
+        atomicMax(max, smax[0]);
+    }
 }
 
 __global__ void normalize_cuda(pixel_t *inout, const int nx, const int ny, const int kn, const pixel_t *min, const pixel_t *max){
