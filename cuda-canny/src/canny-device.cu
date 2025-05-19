@@ -383,12 +383,6 @@ void cannyDevice(const int *h_idata, const int w, const int h,
     cudaCheckMsg("merge_gradients_kernel launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
 
-    // copy over results (temp)
-    cudaSafeCall(cudaMemcpy(after_Gx, d_Gx, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
-    cudaSafeCall(cudaMemcpy(after_Gy, d_Gy, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
-
-    cudaSafeCall(cudaMemcpy(G, d_G, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
-
     non_maximum_suppression_kernel<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, d_nms, nx, ny);
     cudaCheckMsg("non_maximum_suppression_kernel launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
