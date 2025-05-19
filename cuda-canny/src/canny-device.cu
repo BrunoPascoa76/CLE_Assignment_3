@@ -201,8 +201,8 @@ __global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixe
     }
 
     if(tid == 0){ //now we only need to do atomicmin/max once per block (if it's still too much, I'll then do blockwise, but not for now)
-        atomicMin(min, smin[0]);
-        atomicMax(max, smax[0]);
+        //atomicMin(min, smin[0]);
+        //atomicMax(max, smax[0]);
     }
 }
 
