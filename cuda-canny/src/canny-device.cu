@@ -446,10 +446,11 @@ void cannyDevice(const int *h_idata, const int w, const int h,
 
     cudaSafeCall(cudaMemcpy(input, h_idata, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
 
+    
     // Gaussian filter
     gaussian_filter_cuda(input,output, nx, ny, sigma);
 
-
+    /*
     dim3 blockDim(16, 16);
     dim3 gridDim((nx + blockDim.x - 1) / blockDim.x, (ny + blockDim.y - 1) / blockDim.y);
 
@@ -497,6 +498,7 @@ void cannyDevice(const int *h_idata, const int w, const int h,
         changed = false;
         hysteresis_edges(nms, h_odata, nx, ny, tmin, &changed);
     } while (changed == true);
+     */
 
     // Free device memory
     cudaSafeCall(cudaFree(input));
