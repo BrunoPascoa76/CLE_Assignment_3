@@ -199,14 +199,15 @@ void gaussian_filter_device(pixel_t *in,
     float kernel[n]; //in theory switching from 1 pass of a 2d kernel to 2 passes of a 1d kernel
     float sum=0.0f;
 
-    for(int i=0;i<n;i++){
-        float x=i-mean;
-        kernel[i]=expf(-0.5f * (x * x) / (sigma * sigma));
-        sum+=kernel[i];
-    }
-
+    size_t c = 0;
     for (int i = 0; i < n; i++)
-        kernel[i] /= sum;
+        for (int j = 0; j < n; j++)
+        {
+            kernel[c] = exp(-0.5 * (pow((i - mean) / sigma, 2.0) +
+                                    pow((j - mean) / sigma, 2.0))) /
+                        (2 * M_PI * sigma * sigma);
+            c++;
+        }
 
     pixel_t* d_temp;
     cudaSafeCall(cudaMalloc(&d_temp, nx * ny * sizeof(pixel_t)));
@@ -220,17 +221,13 @@ void gaussian_filter_device(pixel_t *in,
     dim3 block(16, 16);
     dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
 
-    convolution_1d_rows<<<grid, block>>>(in, d_temp, d_kernel, nx, ny, n);
+    convolution_cuda_kernel<<<grid, block>>>(in, d_temp, d_kernel, nx, ny, n);
     cudaCheckMsg("horizontal_convolution_kernel launch failed");
-    cudaSafeCall(cudaDeviceSynchronize());
-
-    convolution_1d_cols<<<grid, block>>>(d_temp, in, d_kernel, nx, ny, n);
-    cudaCheckMsg("vertical_convolution_kernel launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
 
     int min, max;
     
-    min_max_cuda(in, nx, ny, &min, &max);
+    min_max_cuda(d_temp, nx, ny, &min, &max);
     cudaCheckMsg("min_max_cuda launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
 
