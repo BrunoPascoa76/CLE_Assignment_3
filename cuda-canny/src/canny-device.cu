@@ -196,39 +196,40 @@ void gaussian_filter_device(pixel_t *in,
 {
     const int n = 2 * (int)(2 * sigma) + 3;
     const float mean = (n - 1) / 2.0f;
-    float kernel[n*n]; //in theory switching from 1 pass of a 2d kernel to 2 passes of a 1d kernel. In practive, however it did not work (perhaps it had poor cache utilization)
+    float kernel[n]; //in theory switching from 1 pass of a 2d kernel to 2 passes of a 1d kernel. In practive, however it did not work (perhaps it had poor cache utilization)
     float sum=0.0f;
 
     size_t c = 0;
+    for(int i=0;i<n;i++){
+        float x=i-mean;
+        kernel[i]=expf(-0.5f * (x * x) / (sigma * sigma));
+        sum+=kernel[i];
+    }
+
     for (int i = 0; i < n; i++)
-        for (int j = 0; j < n; j++)
-        {
-            kernel[c] = exp(-0.5 * (pow((i - mean) / sigma, 2.0) +
-                                    pow((j - mean) / sigma, 2.0))) /
-                        (2 * M_PI * sigma * sigma);
-            c++;
-        }
+        kernel[i] /= sum;
 
     pixel_t* d_temp;
     cudaSafeCall(cudaMalloc(&d_temp, nx * ny * sizeof(pixel_t)));
 
     float* d_kernel;
-    cudaSafeCall(cudaMalloc(&d_kernel, n * n * sizeof(float)));
+    cudaSafeCall(cudaMalloc(&d_kernel, n * sizeof(float)));
 
     //copy over kernel
-    cudaSafeCall(cudaMemcpy(d_kernel, kernel, n * n * sizeof(float), cudaMemcpyHostToDevice));
+    cudaSafeCall(cudaMemcpy(d_kernel, kernel, n * sizeof(float), cudaMemcpyHostToDevice));
 
     dim3 block(16, 16);
     dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
 
-    convolution_cuda_kernel<<<grid, block>>>(in, d_temp, d_kernel, nx, ny, n);
+    convolution_1d_cols<<<grid, block>>>(in, d_temp, d_kernel, nx, ny, n);
     cudaCheckMsg("horizontal_convolution_kernel launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
 
+    convolution_1d_rows<<<grid, block>>>(d_temp, in, d_kernel, nx, ny, n);
+    cudaCheckMsg("vertical_convolution_kernel launch failed");
+    cudaSafeCall(cudaDeviceSynchronize());
+
     int min, max;
-
-    cudaMemcpy(in, d_temp, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToDevice);
-
     
     min_max_cuda(in, nx, ny, &min, &max);
     cudaCheckMsg("min_max_cuda launch failed");
