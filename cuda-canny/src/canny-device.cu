@@ -165,7 +165,7 @@ void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
 
     int h_max, h_min;
 
-    cudaSafeCall(cudaMemcpy(&h_max, d_max, sizeof(pixel_t), cudaMemcpyDeviceToHost));
+    cudaSafeCall(cudaMemcpy(&h_max, d_max, sizeof(pixel_t), cudaMemcpyDeviceToHost)); //this is not temporary, it seems that copying to host and then passing them as constants is faster than using global memory, for some reason
     cudaSafeCall(cudaMemcpy(&h_min, d_min, sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
     normalize_cuda<<<grid,block>>>(out, nx, ny, n, h_min, h_max);
@@ -349,6 +349,8 @@ void cannyDevice(const int *h_idata, const int w, const int h,
     cudaCheckMsg("non_maximum_suppression_kernel launch failed");
     //cudaSafeCall(cudaDeviceSynchronize());
 
+
+    //REMOVE: remove when first_edges is "cuda-fied"
     cudaSafeCall(cudaMemcpy(nms, d_nms, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
     // edges with nms >= tmax
