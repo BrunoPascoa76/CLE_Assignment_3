@@ -173,6 +173,39 @@ void gaussian_filter(const pixel_t *in, pixel_t *out,
     normalize(out, nx, ny, n, min, max);
 }
 
+void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
+                          const int nx, const int ny, const float sigma){ //this is still on host (it was just to visually separate the more complex gaussian from the host)
+    const int n = 2 * (int)(2 * sigma) + 3;
+    const float mean = (float)floor(n / 2.0);
+    float kernel[n * n]; // variable length array
+
+    fprintf(stderr, "gaussian_filter: kernel size %d, sigma=%g\n",
+            n, sigma);
+    size_t c = 0;
+    for (int i = 0; i < n; i++) //we can still do this on cpu, as it's not worth the overhead
+        for (int j = 0; j < n; j++)
+        {
+            kernel[c] = exp(-0.5 * (pow((i - mean) / sigma, 2.0) +
+                                    pow((j - mean) / sigma, 2.0))) /
+                        (2 * M_PI * sigma * sigma);
+            c++;
+        }
+
+    float *d_kernel;
+
+    cudaSafeCall(cudaMalloc((void **)&d_kernel, n * n * sizeof(float)));
+    cudaSafeCall(cudaMemcpy(d_kernel, kernel, n * n * sizeof(float), cudaMemcpyHostToDevice));
+
+    size3 block(16,16);
+    size3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
+
+    convolution_kernel<<<grid, block>>>(in, out, d_kernel, nx, ny, n);
+
+    pixel_t max, min;
+    min_max(out, nx, ny, &min, &max);
+    normalize(out, nx, ny, n, min, max);
+}
+
 __global__ void non_maximum_suppression_kernel(const pixel_t *after_Gx, const pixel_t *after_Gy, const pixel_t *G, pixel_t *nms, const int nx, const int ny)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -349,10 +382,11 @@ void cannyDevice(const int *h_idata, const int w, const int h,
         exit(1);
     }
 
-    // Gaussian filter
-    gaussian_filter(h_idata, h_odata, nx, ny, sigma);
+    cudaSafeCall(cudaMemcpy(input, h_idata, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
 
-    cudaSafeCall(cudaMemcpy(input, h_odata, nx * ny * sizeof(pixel_t), cudaMemcpyHostToDevice));
+    // Gaussian filter
+    gaussian_filter(input,output, nx, ny, sigma);
+
 
     dim3 blockDim(16, 16);
     dim3 gridDim((nx + blockDim.x - 1) / blockDim.x, (ny + blockDim.y - 1) / blockDim.y);
