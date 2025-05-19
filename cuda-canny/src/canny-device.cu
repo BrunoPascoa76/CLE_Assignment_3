@@ -229,8 +229,8 @@ void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
     cudaSafeCall(cudaMalloc(&max, sizeof(pixel_t)));
     cudaSafeCall(cudaMalloc(&min, sizeof(pixel_t)));
 
-    cudaSafeCall(cudaMemset(max, -INT_MAX, sizeof(pixel_t)));
-    cudaSafeCall(cudaMemset(min, INT_MAX, sizeof(pixel_t)));
+    cudaSafeCall(cudaMemset(max, (pixel_t)(-INT_MAX), sizeof(pixel_t)));
+    cudaSafeCall(cudaMemset(min, (pixel_t)(INT_MAX), sizeof(pixel_t)));
 
     min_max_cuda<<<block,grid>>>(out, nx, ny, min, max);
 
