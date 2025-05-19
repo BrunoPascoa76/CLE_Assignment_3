@@ -206,16 +206,18 @@ __global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixe
     }
 }
 
-__global__ void normalize_cuda(pixel_t *inout, const int nx, const int ny, const int kn, const pixel_t *min, const pixel_t *max){
+__global__ void normalize_cuda(pixel_t *inout, const int nx, const int ny, const int kn, const float min, const float max){
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    float denom=max-min;
 
     const int khalf = kn / 2;
 
     if(x < khalf || y < khalf || x >= nx - khalf || y >= ny - khalf)
         return;
 
-    inout[y*nx+x] = MAX_BRIGHTNESS * ((int)inout[y*nx+x] - (float)(*min)) / ((float)(*max) - (float)(*min));
+    inout[y*nx+x] = MAX_BRIGHTNESS * ((int)inout[y*nx+x] - min) / (denom);
 }
 
 void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
@@ -257,7 +259,12 @@ void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
 
     min_max_cuda<<<grid,block,2*block.x*block.y*sizeof(pixel_t)>>>(out, nx, ny, d_min, d_max);
 
-    normalize_cuda<<<grid,block>>>(out, nx, ny, n, d_min, d_max);
+    pixel_t h_max, h_min;
+
+    cudaSafeCall(cudaMemcpy(&h_max, d_max, sizeof(pixel_t), cudaMemcpyDeviceToHost));
+    cudaSafeCall(cudaMemcpy(&h_min, d_min, sizeof(pixel_t), cudaMemcpyDeviceToHost));
+
+    normalize_cuda<<<grid,block>>>(out, nx, ny, n, (float)h_min, (float)h_max);
 }
 
 __global__ void non_maximum_suppression_kernel(const pixel_t *after_Gx, const pixel_t *after_Gy, const pixel_t *G, pixel_t *nms, const int nx, const int ny)
