@@ -173,6 +173,17 @@ void gaussian_filter(const pixel_t *in, pixel_t *out,
     normalize(out, nx, ny, n, min, max);
 }
 
+__global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixel_t *pmin, pixel_t *pmax){
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if(x >= nx || y >= ny)
+        return;
+
+    atomicMin(pmin, in[y * nx + x]);
+    atomicMax(pmax, in[y * nx + x]);
+}
+
 void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
                           const int nx, const int ny, const float sigma){ //this is still on host (it was just to visually separate the more complex gaussian from the host)
     const int n = 2 * (int)(2 * sigma) + 3;
@@ -201,7 +212,12 @@ void gaussian_filter_cuda(const pixel_t *in, pixel_t *out,
 
     convolution_cuda_kernel<<<grid, block>>>(in, out, d_kernel, nx, ny, n);
 
-    pixel_t max, min;
+    pixel_t *max, *min;
+
+    cudaSafeCall(cudaMalloc(&max, sizeof(pixel_t)));
+    cudaSafeCall(cudaMalloc(&min, sizeof(pixel_t)));
+
+    min_max_cuda<<<block,grid>>>(out, nx, ny, min, max);
     //min_max(out, nx, ny, &min, &max);
     //normalize(out, nx, ny, n, min, max);
 }
