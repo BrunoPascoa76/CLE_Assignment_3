@@ -226,15 +226,17 @@ void gaussian_filter_device(pixel_t *in,
     cudaSafeCall(cudaDeviceSynchronize());
 
     int min, max;
+
+    cudaMemcpy(in, d_temp, nx * ny * sizeof(pixel_t), cudaMemcpyDeviceToDevice);
+
     
-    min_max_cuda(d_temp, nx, ny, &min, &max);
+    min_max_cuda(in, nx, ny, &min, &max);
     cudaCheckMsg("min_max_cuda launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
 
-    normalize_kernel<<<grid, block>>>(d_temp, nx, ny, n, min, max);
+    normalize_kernel<<<grid, block>>>(in, nx, ny, n, min, max);
     cudaCheckMsg("normalize_kernel launch failed");
     cudaSafeCall(cudaDeviceSynchronize());
-    
 
     cudaSafeCall(cudaFree(d_temp));
     cudaSafeCall(cudaFree(d_kernel));
