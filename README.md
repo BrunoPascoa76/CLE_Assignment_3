@@ -6,7 +6,6 @@ This report is an overview of the work done in converting a canny edge detection
 
 ## Setup Instructions
 
-
 ## Code overview
 
 ### Gaussian filter
@@ -68,6 +67,40 @@ For merging the actual kernels, I simply applied the same formula as the CPU ver
 Much like other functions before, this one follows the same formulas and logic as the CPU version, only removing the for loops to iterate every pixel by mapping each thread to a pixel.
 
 
-# Falta falar gestão de memory allocation(maybe)
-
 ## Performance Evaluation
+
+### Speedup calculations
+
+Note: due to an unknown glitch (we suspect to be cache-related), the 1st runtime of a certain image may rarely be much higher than expected. To account for this, run the program twice for each image and take into account only the 2nd result.
+
+| image  | host time (ms)  | device time (ms) | speedup | different pixels (#)  | different pixels (%)   |
+|---|---|---|---|---|---|
+| house.pgm   | 28.677536   | 1.551584   | 18.48x  | 0 | 0.00% |
+| lake.pgm  | 32.892288   | 1.560448   | 21.08x  | 1  | 0.00%  |
+| mandrill.pgm  | 35.078049  | 1.543264 | 22.73x  | 0  | 0.00%  |
+| pirate.pgm | 35.022209 | 1.642752 | 21.32x | 1 | 0.00% |
+| jetplane.pgm | 38.491585 | 1.554624 | 24.76x | 0 | 0.00% |
+| livingroom.pgm | 32.986145 | 1.638432 | 20.13x | 0 | 0.00% |
+| peppers_gray.pgm | 34.149952 | 1.615264 | 21.14x | 0 | 0.00% |
+| walkbridge.pgm | 41.146976 | 1.612320 | 25.52x | 2 | 0.00% |
+
+So, overall device times remained relatively stable throughout all images, with speedups between 18x and 26x. This difference, however, does not seem to be tied to a specific image or level of complexity, but rather just the natural variation in performance when dealing with programs with such small runtimes.
+
+Aditionally, while float handling led to some small differences between the 2 generated images, as these were usually 2 pixels or less, we deemed it to be an acceptable difference.
+
+### Performance breakdown
+
+Note: This data was obtained via the command `nsys profile --stats=true ./canny` and are in nanoseconds
+
+| Time (%) | Total Time | Instances | Average    | Minimum  | Maximum  | Name                             |
+|----------|------------|-----------|------------|----------|----------|----------------------------------|
+| 35.1     | 156137     | 3         | 52045.7    | 30530    | 92838    | convolution_cuda_kernel          |
+| 18.4     | 81925      | 6         | 13654.2    | 12673    | 17217    | hysteresis_edges_kernel          |
+| 18.1     | 80677      | 1         | 80677.0    | 80677    | 80677    | non_maximum_suppression_kernel   |
+| 17.7     | 79045      | 1         | 79045.0    | 79045    | 79045    | merge_gradients_kernel           |
+| 5.4      | 24129      | 1         | 24129.0    | 24129    | 24129    | min_max_cuda                     |
+| 2.5      | 11040      | 1         | 11040.0    | 11040    | 11040    | first_edges_kernel               |
+| 1.9      | 8512       | 1         | 8512.0     | 8512     | 8512     | normalize_cuda                   |
+| 0.9      | 3936       | 1         | 3936.0     | 3936     | 3936     | generate_gaussian_kernel         |
+
+Overall, each kernel's runtime was what we expected, with convolution and hysteresis_edges taking the most time due to the number of iterations they had, while kernels like generate_gaussian_kernel or normalize being much faster due to their highly parallelizable nature.
