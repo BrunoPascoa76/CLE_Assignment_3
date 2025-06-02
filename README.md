@@ -99,8 +99,6 @@ Much like other functions before, this one follows the same formulas and logic a
 
 - The original 2D kernels have been systematically extended to handle 3D batch processing by adding z-dimension support to thread indexing, memory access patterns, and grid configurations, enabling simultaneous processing of corresponding pixels across multiple images in the batch.
 
-- To handle concurrent updates safely, the GPU implementation uses **atomicExch(changed, 1)**, instead of a simple boolean flag, preventing race conditions when multiple threads simultaneously discover they can connect weak edges to strong ones.
-
 ## Performance Evaluation
 
 ### Speedup calculations (2D)
@@ -135,7 +133,7 @@ Aditionally, while float handling led to some small differences between the 2 ge
 
 So, overall, while processing all images at once may lead to a larger overall time (which is still around 4x faster than the time it takes to process a single image in the host), it is worth it as it leads to an even larger speedup than before.
 
-### Performance breakdown
+### Performance breakdown (2D)
 
 Note: This data was obtained via the command `nsys profile --stats=true ./canny` and are in nanoseconds
 
