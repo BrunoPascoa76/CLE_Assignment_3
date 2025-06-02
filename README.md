@@ -31,7 +31,7 @@ Note: the gaussian_filter_cuda() function itself runs on the CPU, but it's main 
 #### min_max
 
 In order to normalize later, we would need to gather the minimum and maximum brightness values across the whole image.  
-However, following the naive approach and have each thread compare its value, that would lead to a lot of contention, so we first calculate the local minimum/maximum for each block (using shared memory and parallel reduction) and only compare those values to the current maximum/minimum, greatly reducing wasted time.
+However, following the naive approach and have each thread compare its value atomically to the current value (using **atomicMin()** and **atomicMax()**), that would lead to a lot of contention, so we first calculate the local minimum/maximum for each block (using shared memory and parallel reduction) and only compare those values to the current maximum/minimum, greatly reducing wasted time.
 
 #### normalize
 
@@ -103,7 +103,7 @@ Much like other functions before, this one follows the same formulas and logic a
 
 ## Performance Evaluation
 
-### Speedup calculations
+### Speedup calculations (2D)
 
 Note: due to an unknown glitch (we suspect to be cache-related), the 1st runtime of a certain image may rarely be much higher than expected. To account for this, run the program twice for each image and take into account only the 2nd result.
 
@@ -121,6 +121,19 @@ Note: due to an unknown glitch (we suspect to be cache-related), the 1st runtime
 So, overall device times remained relatively stable throughout all images, with speedups between 18x and 26x. This difference, however, does not seem to be tied to a specific image or level of complexity, but rather just the natural variation in performance when dealing with programs with such small runtimes.
 
 Aditionally, while float handling led to some small differences between the 2 generated images, as these were usually 2 pixels or less, we deemed it to be an acceptable difference.
+
+### Speedup calculations (3D)
+
+(For the 3d version, all 8 images were used)
+
+- **Total host processing time:** 261.417542ms for 8 images
+- **Average host processing time per image:** 32.677193ms
+- **Total device processing time:** 8.653152ms for 8 images
+- **Average device processing time per image (estimate):** 1.081644ms
+- **Speedup:** 30.21x (this speedup refers to the total time, not the per-image estimate)
+- **Overal number of different pixels:** 4 different pixels out of 2097152 (0.00%)
+
+So, overall, while processing all images at once may lead to a larger overall time (which is still around 4x faster than the time it takes to process a single image in the host), it is worth it as it leads to an even larger speedup than before.
 
 ### Performance breakdown
 
