@@ -193,3 +193,4 @@ int savePGM(const char *filename, const uint32_t* data, unsigned int width, unsi
     return 1; // Indicate success
 }
 
+

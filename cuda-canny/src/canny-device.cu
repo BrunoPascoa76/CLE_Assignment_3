@@ -46,7 +46,8 @@ typedef int pixel_t;
 #include "image.c"
 
 // CUDA kernel to generate Gaussian kernel on GPU
-__global__ void generate_gaussian_kernel(float *kernel, int n, float sigma)
+//does not need any change from the 2d implementation
+__global__ void generate_gaussian_kernel_3d(float *kernel, int n, float sigma)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= n * n) return;
@@ -60,17 +61,22 @@ __global__ void generate_gaussian_kernel(float *kernel, int n, float sigma)
                   (2.0f * M_PI * sigma * sigma);
 }
 
-__global__ void convolution_cuda_kernel(const pixel_t *in, pixel_t *out, const float *kernel, const int nx, const int ny, const int kn)
+// 3D convolution kernel for multiple images
+__global__ void convolution_cuda_kernel_3d(const pixel_t *in, pixel_t *out, const float *kernel, 
+                                           const int nx, const int ny, const int nz, const int kn)
 {
     // get current coordinates
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
     int khalf = kn / 2;
 
-    if(x < khalf || y < khalf || x >= nx - khalf || y >= ny - khalf)
-        return; // the borders weren't touched in the cpu version, so trying to replicate that
+    if(x < khalf || y < khalf || x >= nx - khalf || y >= ny - khalf || z >= nz)
+        return;
 
     float sum = 0.0f;
+    int image_size = nx * ny;
+    int base_idx = z * image_size;
 
     // now do the actual convolution for this pixel
     for (int ky = -khalf; ky <= khalf; ky++)
@@ -81,34 +87,41 @@ __global__ void convolution_cuda_kernel(const pixel_t *in, pixel_t *out, const f
             int iy = y + ky;
 
             if (ix >= 0 && ix < nx && iy >= 0 && iy < ny)
-            { // if the current kernel point is whithin bounds...
-                float val = in[iy * nx + ix];
+            {
+                float val = in[base_idx + iy * nx + ix];
                 float weight = kernel[(ky + khalf) * kn + (kx + khalf)];
                 sum += val * weight;
             }
         }
     }
 
-    out[y * nx + x] = (pixel_t)sum;
+    out[base_idx + y * nx + x] = (pixel_t)sum;
 }
 
-__global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixel_t *min_val, pixel_t *max_val)
+
+// 3D min/max reduction kernel
+__global__ void min_max_cuda_3d(const pixel_t *in, const int nx, const int ny, const int nz, 
+                                pixel_t *min_vals, pixel_t *max_vals)
 {
     extern __shared__ pixel_t sdata[];
 
-    pixel_t *smin = sdata; //get the pointers for the min and max positions
-    pixel_t *smax = &sdata[blockDim.x*blockDim.y];
+    pixel_t *smin = sdata;
+    pixel_t *smax = &sdata[blockDim.x * blockDim.y];
 
     int tid = threadIdx.y * blockDim.x + threadIdx.x;
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z;
+    
+    int image_size = nx * ny;
+    int base_idx = z * image_size;
 
-    // Initialize shared memory with extreme values for threads outside image bounds
+    // Initialize shared memory
     if(x >= nx || y >= ny) {
         smin[tid] = INT_MAX;
         smax[tid] = INT_MIN;
     } else {
-        pixel_t val = in[y * nx + x];
+        pixel_t val = in[base_idx + y * nx + x];
         smin[tid] = val;
         smax[tid] = val;
     }
@@ -124,34 +137,44 @@ __global__ void min_max_cuda(const pixel_t *in, const int nx, const int ny, pixe
     }
 
     if(tid == 0) {
-        atomicMin(min_val, smin[0]);
-        atomicMax(max_val, smax[0]);
+        atomicMin(&min_vals[z], smin[0]);
+        atomicMax(&max_vals[z], smax[0]);
     }
 }
 
-__global__ void normalize_cuda(pixel_t *inout, const int nx, const int ny, const int kn, const int min_val, const int max_val)
+// 3D normalization kernel
+__global__ void normalize_cuda_3d(pixel_t *inout, const int nx, const int ny, const int nz, const int kn, 
+                                  const pixel_t *min_vals, const pixel_t *max_vals)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
     const int khalf = kn / 2;
 
-    if(x < khalf || y < khalf || x >= nx - khalf || y >= ny - khalf)
+    if(x < khalf || y < khalf || x >= nx - khalf || y >= ny - khalf || z >= nz)
         return;
 
+    int image_size = nx * ny;
+    int idx = z * image_size + y * nx + x;
+    
+    int min_val = min_vals[z];
+    int max_val = max_vals[z];
+
     if (max_val != min_val) {
-        pixel_t pixel = (pixel_t)(MAX_BRIGHTNESS * ((float)(inout[y * nx + x] - min_val) / (float)(max_val - min_val)));
-        inout[y * nx + x] = pixel;
+        pixel_t pixel = (pixel_t)(MAX_BRIGHTNESS * ((float)(inout[idx] - min_val) / (float)(max_val - min_val)));
+        inout[idx] = pixel;
     } else {
-        inout[y * nx + x] = 0;
+        inout[idx] = 0;
     }
 }
 
-void gaussian_filter_cuda(const pixel_t *in, pixel_t *out, const int nx, const int ny, const float sigma)
+// 3D Gaussian filter
+void gaussian_filter_cuda_3d(const pixel_t *in, pixel_t *out, const int nx, const int ny, const int nz, const float sigma)
 {
     const int n = 2 * (int)(2 * sigma) + 3;
     
-    fprintf(stderr, "gaussian_filter: kernel size %d, sigma=%g\n", n, sigma);
+    fprintf(stderr, "gaussian_filter_3d: kernel size %d, sigma=%g, processing %d images\n", n, sigma, nz);
 
     // Allocate memory for kernel on GPU
     float *d_kernel;
@@ -160,53 +183,70 @@ void gaussian_filter_cuda(const pixel_t *in, pixel_t *out, const int nx, const i
     // Generate Gaussian kernel on GPU
     int kernel_threads = 256;
     int kernel_blocks = (n * n + kernel_threads - 1) / kernel_threads;
-    generate_gaussian_kernel<<<kernel_blocks, kernel_threads>>>(d_kernel, n, sigma);
-    cudaCheckMsg("generate_gaussian_kernel launch failed");
+    generate_gaussian_kernel_3d<<<kernel_blocks, kernel_threads>>>(d_kernel, n, sigma);
+    cudaCheckMsg("generate_gaussian_kernel_3d launch failed");
 
-    // Set up grid and block dimensions for convolution
-    dim3 block(16, 16);
-    dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
+    // Set up 3D grid and block dimensions for convolution
+    dim3 block(16, 16, 1);
+    dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y, nz);
 
-    // Apply Gaussian filter using convolution
-    convolution_cuda_kernel<<<grid, block>>>(in, out, d_kernel, nx, ny, n);
-    cudaCheckMsg("gaussian convolution launch failed");
+    // Apply Gaussian filter using 3D convolution
+    convolution_cuda_kernel_3d<<<grid, block>>>(in, out, d_kernel, nx, ny, nz, n);
+    cudaCheckMsg("gaussian convolution 3d launch failed");
 
-    // Find min and max values for normalization
-    pixel_t *d_max, *d_min;
-    pixel_t h_max = INT_MIN, h_min = INT_MAX;
+    // Find min and max values for normalization for each image
+    pixel_t *d_max_vals, *d_min_vals;
+    pixel_t *h_max_vals = (pixel_t*)malloc(nz * sizeof(pixel_t));
+    pixel_t *h_min_vals = (pixel_t*)malloc(nz * sizeof(pixel_t));
+    
+    // Initialize host arrays
+    for(int i = 0; i < nz; i++) {
+        h_max_vals[i] = INT_MIN;
+        h_min_vals[i] = INT_MAX;
+    }
 
-    cudaSafeCall(cudaMalloc(&d_max, sizeof(pixel_t)));
-    cudaSafeCall(cudaMalloc(&d_min, sizeof(pixel_t)));
+    cudaSafeCall(cudaMalloc(&d_max_vals, nz * sizeof(pixel_t)));
+    cudaSafeCall(cudaMalloc(&d_min_vals, nz * sizeof(pixel_t)));
 
-    cudaSafeCall(cudaMemcpy(d_max, &h_max, sizeof(pixel_t), cudaMemcpyHostToDevice));
-    cudaSafeCall(cudaMemcpy(d_min, &h_min, sizeof(pixel_t), cudaMemcpyHostToDevice));
+    cudaSafeCall(cudaMemcpy(d_max_vals, h_max_vals, nz * sizeof(pixel_t), cudaMemcpyHostToDevice));
+    cudaSafeCall(cudaMemcpy(d_min_vals, h_min_vals, nz * sizeof(pixel_t), cudaMemcpyHostToDevice));
 
-    min_max_cuda<<<grid, block, 2 * block.x * block.y * sizeof(pixel_t)>>>(out, nx, ny, d_min, d_max);
-    cudaCheckMsg("min_max_cuda launch failed");
+    // Set up grid for min/max computation
+    dim3 minmax_grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y, nz);
+    min_max_cuda_3d<<<minmax_grid, block, 2 * block.x * block.y * sizeof(pixel_t)>>>(out, nx, ny, nz, d_min_vals, d_max_vals);
+    cudaCheckMsg("min_max_cuda_3d launch failed");
 
     // Copy min/max values back to host
-    cudaSafeCall(cudaMemcpy(&h_max, d_max, sizeof(pixel_t), cudaMemcpyDeviceToHost));
-    cudaSafeCall(cudaMemcpy(&h_min, d_min, sizeof(pixel_t), cudaMemcpyDeviceToHost));
+    cudaSafeCall(cudaMemcpy(h_max_vals, d_max_vals, nz * sizeof(pixel_t), cudaMemcpyDeviceToHost));
+    cudaSafeCall(cudaMemcpy(h_min_vals, d_min_vals, nz * sizeof(pixel_t), cudaMemcpyDeviceToHost));
 
-    // Normalize the result
-    normalize_cuda<<<grid, block>>>(out, nx, ny, n, h_min, h_max);
-    cudaCheckMsg("normalize_cuda launch failed");
+    // Normalize the result for all images
+    normalize_cuda_3d<<<grid, block>>>(out, nx, ny, nz, n, d_min_vals, d_max_vals);
+    cudaCheckMsg("normalize_cuda_3d launch failed");
 
     // Clean up
     cudaSafeCall(cudaFree(d_kernel));
-    cudaSafeCall(cudaFree(d_max));
-    cudaSafeCall(cudaFree(d_min));
+    cudaSafeCall(cudaFree(d_max_vals));
+    cudaSafeCall(cudaFree(d_min_vals));
+    free(h_max_vals);
+    free(h_min_vals);
 }
 
-__global__ void non_maximum_suppression_kernel(const pixel_t *after_Gx, const pixel_t *after_Gy, const pixel_t *G, pixel_t *nms, const int nx, const int ny)
+__global__ void non_maximum_suppression_kernel_3d(const pixel_t *after_Gx, const pixel_t *after_Gy, 
+                                                  const pixel_t *G, pixel_t *nms, 
+                                                  const int nx, const int ny, const int nz)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (x < 1 || y < 1 || x >= nx - 1 || y >= ny - 1)
+    if (x < 1 || y < 1 || x >= nx - 1 || y >= ny - 1 || z >= nz)
         return;
 
-    int c = x + y * nx;
+    int image_size = nx * ny;
+    int base_idx = z * image_size;
+    int c = base_idx + x + y * nx;
+    
     const int nn = c - nx;
     const int ss = c + nx;
     const int ww = c + 1;
@@ -248,19 +288,20 @@ void first_edges(const pixel_t *nms, pixel_t *reference,
 }
 
 
-__global__ void first_edges_kernel(const pixel_t *nms, pixel_t *reference,
-                  const int nx, const int ny, const int tmax)
+// 3D First edges kernel
+__global__ void first_edges_kernel_3d(const pixel_t *nms, pixel_t *reference,
+                                      const int nx, const int ny, const int nz, const int tmax)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    // Skip border pixels just like in the original CPU version
-    if (x < 1 || y < 1 || x >= nx - 1 || y >= ny - 1)
+    if (x < 1 || y < 1 || x >= nx - 1 || y >= ny - 1 || z >= nz)
         return;
 
-    size_t c = x + y * nx;
+    int image_size = nx * ny;
+    size_t c = z * image_size + x + y * nx;
     
-    // Same logic as CPU implementation - mark pixels >= tmax as edges
     if (nms[c] >= tmax)
     {
         reference[c] = MAX_BRIGHTNESS;
@@ -301,23 +342,25 @@ void hysteresis_edges(const pixel_t *nms, pixel_t *reference,
     }
 }
 
-__global__ void hysteresis_edges_kernel(const pixel_t *nms, pixel_t *reference,
-                      const int nx, const int ny, const int tmin, int *changed)
+// 3D Hysteresis edges kernel
+__global__ void hysteresis_edges_kernel_3d(const pixel_t *nms, pixel_t *reference,
+                                           const int nx, const int ny, const int nz, 
+                                           const int tmin, int *changed)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    // Skip border pixels
-    if (x < 1 || y < 1 || x >= nx - 1 || y >= ny - 1)
+    if (x < 1 || y < 1 || x >= nx - 1 || y >= ny - 1 || z >= nz)
         return;
 
-    size_t t = x + y * nx;
+    int image_size = nx * ny;
+    size_t t = z * image_size + x + y * nx;
 
-    // Pixels that are above tmin but not yet marked as edges
     if (nms[t] >= tmin && reference[t] == 0)
     {
         // Check all 8 neighboring pixels
-        int nbs[8];          // neighbours
+        int nbs[8];
         nbs[0] = t - nx;     // nn
         nbs[1] = t + nx;     // ss
         nbs[2] = t + 1;      // ww
@@ -327,71 +370,80 @@ __global__ void hysteresis_edges_kernel(const pixel_t *nms, pixel_t *reference,
         nbs[6] = nbs[1] + 1; // sw
         nbs[7] = nbs[1] - 1; // se
 
-        // Check if any neighbor is an edge
         for (int k = 0; k < 8; k++)
         {
             if (reference[nbs[k]] != 0)
             {
                 reference[t] = MAX_BRIGHTNESS;
-                atomicExch(changed, 1); // Signal that we made a change
+                atomicExch(changed, 1);
                 break;
             }
         }
     }
 }
 
-__global__ void merge_gradients_kernel(const pixel_t *after_Gx, const pixel_t *after_Gy, pixel_t *G, const int nx, const int ny)
+// 3D Merge gradients kernel
+__global__ void merge_gradients_kernel_3d(const pixel_t *after_Gx, const pixel_t *after_Gy, 
+                                          pixel_t *G, const int nx, const int ny, const int nz)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (x < 1 || y < 1 || x >= nx - 1 || y >= ny - 1)
+    if (x < 1 || y < 1 || x >= nx - 1 || y >= ny - 1 || z >= nz)
         return;
 
-    int c = x + y * nx;
+    int image_size = nx * ny;
+    int c = z * image_size + x + y * nx;
     G[c] = (pixel_t)(hypot((double)(after_Gx[c]), (double)(after_Gy[c])));
 }
 
-// canny edge detector code to run on the GPU
-void cannyDevice(const int *h_idata, const int w, const int h,
-                 const int tmin, const int tmax,
-                 const float sigma,
-                 int *h_odata)
+void cannyDevice3D(const int **h_idata_array, const int w, const int h, const int num_images,
+                   const int tmin, const int tmax, const float sigma,
+                   int **h_odata_array)
 {
     const int nx = w;
     const int ny = h;
+    const int nz = num_images;
     const size_t image_size = nx * ny * sizeof(pixel_t);
+    const size_t total_size = nx * ny * nz * sizeof(pixel_t);
     const int conv_kernel_size = 3;
 
-    // Device memory pointers - only allocate what we actually need
+    printf("Processing %d images of size %dx%d\n", nz, nx, ny);
+
+    // Device memory pointers
     pixel_t *d_input = NULL, *d_temp = NULL, *d_Gx = NULL, *d_Gy = NULL;
     pixel_t *d_nms = NULL, *d_G = NULL, *d_reference = NULL;
     float *d_kernel = NULL;
     int *d_changed = NULL;
 
     // Allocate device memory
-    cudaSafeCall(cudaMalloc(&d_input, image_size));
-    cudaSafeCall(cudaMalloc(&d_temp, image_size));  // Temporary buffer for Gaussian output
+    cudaSafeCall(cudaMalloc(&d_input, total_size));
+    cudaSafeCall(cudaMalloc(&d_temp, total_size));
     cudaSafeCall(cudaMalloc(&d_kernel, sizeof(float) * conv_kernel_size * conv_kernel_size));
-    cudaSafeCall(cudaMalloc(&d_G, image_size));
-    cudaSafeCall(cudaMalloc(&d_Gx, image_size));
-    cudaSafeCall(cudaMalloc(&d_Gy, image_size));
-    cudaSafeCall(cudaMalloc(&d_nms, image_size));
-    cudaSafeCall(cudaMalloc(&d_reference, image_size));
+    cudaSafeCall(cudaMalloc(&d_G, total_size));
+    cudaSafeCall(cudaMalloc(&d_Gx, total_size));
+    cudaSafeCall(cudaMalloc(&d_Gy, total_size));
+    cudaSafeCall(cudaMalloc(&d_nms, total_size));
+    cudaSafeCall(cudaMalloc(&d_reference, total_size));
     cudaSafeCall(cudaMalloc(&d_changed, sizeof(int)));
 
-    // Copy input data to device
-    cudaSafeCall(cudaMemcpy(d_input, h_idata, image_size, cudaMemcpyHostToDevice));
+    // Copy all input images to device
+    for(int i = 0; i < nz; i++) {
+        cudaSafeCall(cudaMemcpy(d_input + i * nx * ny, h_idata_array[i], 
+                               image_size, cudaMemcpyHostToDevice));
+    }
 
     // Initialize reference buffer to zeros
-    cudaSafeCall(cudaMemset(d_reference, 0, image_size));
+    cudaSafeCall(cudaMemset(d_reference, 0, total_size));
 
-    // Apply Gaussian filter (now fully on GPU)
-    gaussian_filter_cuda(d_input, d_temp, nx, ny, sigma);
+    // Apply Gaussian filter (now fully on GPU for all images)
+    gaussian_filter_cuda_3d(d_input, d_temp, nx, ny, nz, sigma);
 
-    // Set up grid and block dimensions
-    dim3 blockDim(16, 16);
-    dim3 gridDim((nx + blockDim.x - 1) / blockDim.x, (ny + blockDim.y - 1) / blockDim.y);
+    // Set up 3D grid and block dimensions
+    dim3 blockDim(16, 16, 1);
+    dim3 gridDim((nx + blockDim.x - 1) / blockDim.x, 
+                 (ny + blockDim.y - 1) / blockDim.y, nz);
 
     // Compute gradients using Sobel operators
     const float Gx[] = {-1, 0, 1,
@@ -399,48 +451,48 @@ void cannyDevice(const int *h_idata, const int w, const int h,
                         -1, 0, 1};
     cudaSafeCall(cudaMemcpy(d_kernel, Gx, conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
 
-    // X gradient
-    convolution_cuda_kernel<<<gridDim, blockDim>>>(d_temp, d_Gx, d_kernel, nx, ny, conv_kernel_size);
-    cudaCheckMsg("convolution_cuda_kernel X launch failed");
+    // X gradient for all images
+    convolution_cuda_kernel_3d<<<gridDim, blockDim>>>(d_temp, d_Gx, d_kernel, nx, ny, nz, conv_kernel_size);
+    cudaCheckMsg("convolution_cuda_kernel_3d X launch failed");
 
     const float Gy[] = {1, 2, 1,
                         0, 0, 0,
                         -1, -2, -1};
     cudaSafeCall(cudaMemcpy(d_kernel, Gy, conv_kernel_size * conv_kernel_size * sizeof(float), cudaMemcpyHostToDevice));
 
-    // Y gradient
-    convolution_cuda_kernel<<<gridDim, blockDim>>>(d_temp, d_Gy, d_kernel, nx, ny, conv_kernel_size);
-    cudaCheckMsg("convolution_cuda_kernel Y launch failed");
+    // Y gradient for all images
+    convolution_cuda_kernel_3d<<<gridDim, blockDim>>>(d_temp, d_Gy, d_kernel, nx, ny, nz, conv_kernel_size);
+    cudaCheckMsg("convolution_cuda_kernel_3d Y launch failed");
 
-    // Merge gradients to compute magnitude
-    merge_gradients_kernel<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, nx, ny);
-    cudaCheckMsg("merge_gradients_kernel launch failed");
+    // Merge gradients to compute magnitude for all images
+    merge_gradients_kernel_3d<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, nx, ny, nz);
+    cudaCheckMsg("merge_gradients_kernel_3d launch failed");
 
-    // Non-maximum suppression
-    non_maximum_suppression_kernel<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, d_nms, nx, ny);
-    cudaCheckMsg("non_maximum_suppression_kernel launch failed");
+    // Non-maximum suppression for all images
+    non_maximum_suppression_kernel_3d<<<gridDim, blockDim>>>(d_Gx, d_Gy, d_G, d_nms, nx, ny, nz);
+    cudaCheckMsg("non_maximum_suppression_kernel_3d launch failed");
 
-    // First edge detection (pixels >= tmax)
-    first_edges_kernel<<<gridDim, blockDim>>>(d_nms, d_reference, nx, ny, tmax);
-    cudaCheckMsg("first_edges_kernel launch failed");
+    // First edge detection (pixels >= tmax) for all images
+    first_edges_kernel_3d<<<gridDim, blockDim>>>(d_nms, d_reference, nx, ny, nz, tmax);
+    cudaCheckMsg("first_edges_kernel_3d launch failed");
 
-    // Hysteresis edge linking
+    // Hysteresis edge linking for all images
     int h_changed;
     do {
-        // Reset changed flag
         h_changed = 0;
         cudaSafeCall(cudaMemcpy(d_changed, &h_changed, sizeof(int), cudaMemcpyHostToDevice));
         
-        // Run hysteresis kernel
-        hysteresis_edges_kernel<<<gridDim, blockDim>>>(d_nms, d_reference, nx, ny, tmin, d_changed);
-        cudaCheckMsg("hysteresis_edges_kernel launch failed");
+        hysteresis_edges_kernel_3d<<<gridDim, blockDim>>>(d_nms, d_reference, nx, ny, nz, tmin, d_changed);
+        cudaCheckMsg("hysteresis_edges_kernel_3d launch failed");
         
-        // Check if any changes were made
         cudaSafeCall(cudaMemcpy(&h_changed, d_changed, sizeof(int), cudaMemcpyDeviceToHost));
     } while (h_changed);
 
-    // Copy result back to host
-    cudaSafeCall(cudaMemcpy(h_odata, d_reference, image_size, cudaMemcpyDeviceToHost));
+    // Copy results back to host
+    for(int i = 0; i < nz; i++) {
+        cudaSafeCall(cudaMemcpy(h_odata_array[i], d_reference + i * nx * ny, 
+                               image_size, cudaMemcpyDeviceToHost));
+    }
 
     // Free all device memory
     cudaSafeCall(cudaFree(d_input));

@@ -1,5 +1,5 @@
-
 // Based on CUDA SDK template from NVIDIA
+// Modified for 3D multi-image processing
 
 // includes, system
 #include <stdlib.h>
@@ -9,7 +9,8 @@
 #include <unistd.h>
 #include <assert.h>
 #include <float.h>
-
+#include <dirent.h>
+#include <libgen.h>
 
 //==============================
 // Your code goes into this file
@@ -215,10 +216,95 @@ void cannyHost( const int *h_idata, const int w, const int h,
     free(nms);
 }
 
+// Function to load multiple images from a directory or file list
+int loadMultipleImages(char* input_path, int*** images, unsigned int* w, unsigned int* h, int max_images)
+{
+    struct dirent *entry;
+    DIR *dp;
+    char filepath[1024];
+    int image_count = 0;
+    
+    // Check if input is a directory
+    dp = opendir(input_path);
+    if (dp != NULL) {
+        printf("Processing directory: %s\n", input_path);
+        
+        // Allocate array for image pointers
+        *images = (int**)malloc(max_images * sizeof(int*));
+        
+        while ((entry = readdir(dp)) && image_count < max_images) {
+            // Skip . and .. entries
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                continue;
+            
+            // Check for .pgm extension
+            char *ext = strrchr(entry->d_name, '.');
+            if (ext && strcmp(ext, ".pgm") == 0) {
+                snprintf(filepath, sizeof(filepath), "%s/%s", input_path, entry->d_name);
+                
+                unsigned int img_w, img_h;
+                if (loadPGM(filepath, (uint32_t**)&((*images)[image_count]), &img_w, &img_h) == 1) {
+                    if (image_count == 0) {
+                        *w = img_w;
+                        *h = img_h;
+                        printf("Image dimensions: %dx%d\n", *w, *h);
+                    } else if (img_w != *w || img_h != *h) {
+                        printf("Warning: Image %s has different dimensions (%dx%d), skipping\n",
+                               entry->d_name, img_w, img_h);
+                        free((*images)[image_count]);
+                        continue;
+                    }
+                    printf("Loaded image %d: %s\n", image_count + 1, entry->d_name);
+                    image_count++;
+                } else {
+                    printf("Failed to load image: %s\n", filepath);
+                }
+            }
+        }
+        closedir(dp);
+    } else {
+        // Treat as single file
+        printf("Processing single file: %s\n", input_path);
+        *images = (int**)malloc(1 * sizeof(int*));
+        if (loadPGM(input_path, (uint32_t**)&((*images)[0]), w, h) == 1) {
+            image_count = 1;
+        } else {
+            printf("Failed to load image: %s\n", input_path);
+            free(*images);
+            return 0;
+        }
+    }
+    
+    printf("Total images loaded: %d\n", image_count);
+    return image_count;
+}
+
+// Function to save multiple images
+void saveMultipleImages(char* output_prefix, int** images, unsigned int w, unsigned int h, int num_images, const char* suffix)
+{
+    char filename[1024];
+    for (int i = 0; i < num_images; i++) {
+        snprintf(filename, sizeof(filename), "%s_%s_%03d.pgm", output_prefix, suffix, i);
+        if (savePGM(filename, (unsigned int*)images[i], w, h) != 1) {
+            printf("Failed to save image: %s\n", filename);
+        } else {
+            printf("Saved: %s\n", filename);
+        }
+    }
+}
+
 // print command line format
 void usage(char *command)
 {
-    printf("Usage: %s [-h] [-d device] [-i inputfile] [-o outputfile] [-r referenceFile] [-s sigma] [-t threshold]\n",command);
+    printf("Usage: %s [-h] [-d device] [-i input_path] [-o output_prefix] [-n num_images] [-s sigma] [-t threshold]\n", command);
+    printf("  -i input_path    : Input directory containing .pgm files or single .pgm file\n");
+    printf("  -o output_prefix : Output filename prefix for processed images\n");
+    printf("  -n num_images    : Maximum number of images to process (default: 10)\n");
+    printf("  -s sigma         : Gaussian sigma parameter (default: 1.0)\n");
+    printf("  -t tmin          : Lower threshold for hysteresis (default: 45)\n");
+    printf("  -x tmax          : Upper threshold for hysteresis (default: 50)\n");
+    printf("  -d device        : CUDA device ID (default: 0)\n");
+    printf("  -h               : Show this help\n");
 }
 
 // main
@@ -226,17 +312,18 @@ int main( int argc, char** argv)
 {
     // default command line options
     int deviceId = 0;
-    char *fileIn=(char *)"images/lake.pgm",*fileOut=(char *)"out.pgm",*referenceOut=(char *)"reference.pgm";
+    char *input_path = (char *)"images/";
+    char *output_prefix = (char *)"output";
     int tmin = 45, tmax = 50;
-    float sigma=1.0f;
+    float sigma = 1.0f;
+    int max_images = 10;
 
     // parse command line arguments
     int opt;
-    while( (opt = getopt(argc,argv,"d:i:o:r:n:x:s:h")) !=-1)
+    while( (opt = getopt(argc,argv,"d:i:o:n:x:t:s:h")) !=-1)
     {
         switch(opt)
         {
-
             case 'd':  // device
                 if(sscanf(optarg,"%d",&deviceId)!=1)
                 {
@@ -245,38 +332,40 @@ int main( int argc, char** argv)
                 }
                 break;
 
-            case 'i': // input image filename
+            case 'i': // input path (directory or file)
                 if(strlen(optarg)==0)
                 {
                     usage(argv[0]);
                     exit(1);
                 }
-
-                fileIn = strdup(optarg);
+                input_path = strdup(optarg);
                 break;
-            case 'o': // output image (from device) filename
+                
+            case 'o': // output prefix
                 if(strlen(optarg)==0)
                 {
                     usage(argv[0]);
                     exit(1);
                 }
-                fileOut = strdup(optarg);
+                output_prefix = strdup(optarg);
                 break;
-            case 'r': // output image (from host) filename
-                if(strlen(optarg)==0)
+                
+            case 'n': // max number of images
+                if(strlen(optarg)==0 || sscanf(optarg,"%d",&max_images)!=1)
                 {
                     usage(argv[0]);
                     exit(1);
                 }
-                referenceOut = strdup(optarg);
                 break;
-            case 'n': // tmin
+                
+            case 't': // tmin
                 if(strlen(optarg)==0 || sscanf(optarg,"%d",&tmin)!=1)
                 {
                     usage(argv[0]);
                     exit(1);
                 }
                 break;
+                
             case 'x': // tmax
                 if(strlen(optarg)==0 || sscanf(optarg,"%d",&tmax)!=1)
                 {
@@ -284,6 +373,7 @@ int main( int argc, char** argv)
                     exit(1);
                 }
                 break;
+                
             case 's': // sigma
                 if(strlen(optarg)==0 || sscanf(optarg,"%f",&sigma)!=1)
                 {
@@ -291,11 +381,11 @@ int main( int argc, char** argv)
                     exit(1);
                 }
                 break;
+                
             case 'h': // help
                 usage(argv[0]);
                 exit(0);
                 break;
-
         }
     }
 
@@ -330,63 +420,89 @@ int main( int argc, char** argv)
     cudaEventCreate(&startD);
     cudaEventCreate(&stopD);
 
-    // allocate host memory
-    int* h_idata=NULL;
-    unsigned int h,w;
-
-    //load pgm
-    if (loadPGM(fileIn, (uint32_t**)&h_idata, &w, &h) != 1) {
+    // Load multiple images
+    int** h_idata_array = NULL;
+    unsigned int w, h;
+    int num_images = loadMultipleImages(input_path, &h_idata_array, &w, &h, max_images);
+    
+    if (num_images == 0) {
+        printf("No images loaded. Exiting.\n");
         exit(1);
     }
 
-    // allocate mem for the result on host side
-    int* h_odata = (int*) calloc( h*w, sizeof(unsigned int));
-    int* reference = (int*) calloc( h*w, sizeof(unsigned int));
+    // allocate mem for the results on host side
+    int** h_odata_array = (int**)malloc(num_images * sizeof(int*));
+    int** reference_array = (int**)malloc(num_images * sizeof(int*));
+    
+    for (int i = 0; i < num_images; i++) {
+        h_odata_array[i] = (int*)calloc(h * w, sizeof(int));
+        reference_array[i] = (int*)calloc(h * w, sizeof(int));
+    }
 
-    // detect edges at host
+    // Process images on host (one by one for comparison)
+    printf("\nProcessing on Host...\n");
     cudaEventRecord( startH, 0 );
-    cannyHost(h_idata, w, h, tmin, tmax, sigma, reference);
+    for (int i = 0; i < num_images; i++) {
+        cannyHost(h_idata_array[i], w, h, tmin, tmax, sigma, reference_array[i]);
+    }
     cudaEventRecord( stopH, 0 );
     cudaEventSynchronize( stopH );
 
-    // detect edges at GPU
+    // Process all images on GPU simultaneously
+    printf("Processing on Device (3D batch)...\n");
     cudaEventRecord( startD, 0 );
-    cannyDevice(h_idata, w, h, tmin, tmax, sigma, h_odata);
+    cannyDevice3D((const int**)h_idata_array, w, h, num_images, tmin, tmax, sigma, h_odata_array);
     cudaEventRecord( stopD, 0 );
     cudaEventSynchronize( stopD );
 
-    // check if kernel execution generated and error
+    // check if kernel execution generated an error
     cudaCheckMsg("Kernel execution failed");
 
     float timeH, timeD;
     cudaEventElapsedTime( &timeH, startH, stopH );
-    printf( "Host processing time: %f (ms)\n", timeH);
+    printf( "Host processing time: %f (ms) for %d images\n", timeH, num_images);
+    printf( "Average host time per image: %f (ms)\n", timeH / num_images);
+    
     cudaEventElapsedTime( &timeD, startD, stopD );
-    printf( "Device processing time: %f (ms)\n", timeD);
+    printf( "Device processing time: %f (ms) for %d images\n", timeD, num_images);
+    printf( "Average device time per image: %f (ms)\n", timeD / num_images);
+    printf( "Speedup: %.2fx\n", timeH / timeD);
 
-    // save output images
-    if (savePGM(referenceOut, (unsigned int *)reference, w, h) != 1) {
-        exit(1);
-    }
+    // Save output images
+    saveMultipleImages(output_prefix, reference_array, w, h, num_images, "host");
+    saveMultipleImages(output_prefix, h_odata_array, w, h, num_images, "device");
 
-    if (savePGM(fileOut,(unsigned int *) h_odata, w, h) != 1) {
-        exit(1);
+    // Compare results
+    int total_pixels = w * h * num_images;
+    int total_diff = 0;
+    
+    for (int img = 0; img < num_images; img++) {
+        int img_diff = 0;
+        for (int i = 0; i < w * h; ++i){
+            int delta = abs(reference_array[img][i] - h_odata_array[img][i]);
+            if (delta != 0) {
+                img_diff++;
+                total_diff++;
+            }
+        }
+        printf("Image %d: %d different pixels out of %d (%.2f%%)\n", 
+               img, img_diff, w*h, img_diff/(float)(w*h) * 100.0f);
     }
-
-    int hist = 0;
-    for (int i = 0; i < w * h; ++i){
-        int delta = abs(reference[i] - h_odata[i]);
-        if (delta != 0)
-            hist++;
-    }
-    printf("\nNumber of different pixels: %d/%d (%.2f%%)\n", hist, w*h, hist/(float)(w*h) * 100.0f);
+    
+    printf("\nOverall: %d different pixels out of %d (%.2f%%)\n", 
+           total_diff, total_pixels, total_diff/(float)total_pixels * 100.0f);
 
     // cleanup memory
-    if (h_idata != nullptr)
-        free( h_idata);
-
-    free( h_odata);
-    free( reference);
+    for (int i = 0; i < num_images; i++) {
+        free(h_idata_array[i]);
+        free(h_odata_array[i]);
+        free(reference_array[i]);
+    }
+    free(h_idata_array);
+    free(h_odata_array);
+    free(reference_array);
 
     cudaDeviceReset();
+    
+    return 0;
 }
