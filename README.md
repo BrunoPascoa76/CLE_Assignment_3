@@ -4,7 +4,13 @@
 
 This report is an overview of the work done in converting a canny edge detection script to use CUDA cores for better efficiency.
 
-## Setup Instructions
+## Instructions
+
+We developed two versions of the project:
+
+- 2D Version: The original version as specified in the assignment.
+
+- 3D Version: An extended version that processes batches of multiple 2D images. This version is located in the 3D folder.
 
 ## Code overview
 
@@ -13,8 +19,6 @@ This report is an overview of the work done in converting a canny edge detection
 Note: the gaussian_filter_cuda() function itself runs on the CPU, but it's main purpose is to launch gaussian-related kernels (while keeping the code separated for readability)
 
 #### Gaussian Kernel calculation
-
-//change this later
 
 - This CUDA kernel generates a 2D Gaussian filter by having each GPU thread compute one element of the n×n matrix. Each thread gets a unique linear index (idx), converts it to 2D coordinates (i,j) using division and module, then applies the Gaussian formula. 
 
@@ -65,6 +69,20 @@ For merging the actual kernels, I simply applied the same formula as the CPU ver
 ### Non maximum suppression
 
 Much like other functions before, this one follows the same formulas and logic as the CPU version, only removing the for loops to iterate every pixel by mapping each thread to a pixel.
+
+### Memory Management
+
+- The cannyDevice function demonstrates careful GPU memory management by allocating separate device buffers for each stage of the Canny edge detection pipeline. The function allocates eight distinct GPU memory regions: input image data (d_input), temporary Gaussian filter output (d_temp), gradient computations (d_Gx, d_Gy, d_G), non-maximum suppression results (d_nms), final edge reference (d_reference), convolution kernel (d_kernel), and a change flag for hysteresis iteration (d_changed), which is the only one that is transmitted between host and device during the execution, but due to its small size, it has minimal performance impact.
+
+- This approach properly manages CUDA memory by keeping intermediate results on the GPU except when transfer is necessary, as previously explained.
+
+# 3D Version
+
+- This version of the program processes multiple 2D images simultaneously by organizing them into a 3D data structure, where each image occupies a distinct layer along the z-axis. Rather than processing images sequentially, the program leverages CUDA's parallel processing capabilities to apply the same operations across all image layers concurrently, with the z-coordinate serving as the image identifier.
+
+- Note that the parallelization strategy operates at the block level, meaning that all threads within a single block collaborate to process pixels from the same image, while different blocks are assigned to process different images concurrently.
+
+- The original 2D kernels have been systematically extended to handle 3D batch processing by adding z-dimension support to thread indexing, memory access patterns, and grid configurations, enabling simultaneous processing of corresponding pixels across multiple images in the batch.
 
 
 ## Performance Evaluation
