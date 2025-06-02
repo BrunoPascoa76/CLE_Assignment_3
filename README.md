@@ -14,14 +14,13 @@ Note: the gaussian_filter_cuda() function itself runs on the CPU, but it's main 
 
 #### Gaussian Kernel calculation
 
-//change this later
-
-- This CUDA kernel generates a 2D Gaussian filter by having each GPU thread compute one element of the n×n matrix. Each thread gets a unique linear index (idx), converts it to 2D coordinates (i,j) using division and module, then applies the Gaussian formula. 
+- This CUDA kernel generates a 2D Gaussian filter by having each GPU thread compute one element of the n×n matrix. Each thread gets a unique linear index (idx), converts it to 2D coordinates (i,j) using division and module, then applies the Gaussian formula.  
 
 #### Convolution (Gaussian filter)
 
-For the convolution kernel (used both in the gaussian and sobel filters), we utilized the same formula as the CPU version. However, by mapping each thread to a pixel, we were able to remove the 2 outermost loops (only needing 2 loops for applying the kernel to the neighbors).  
-The only additional precaution needed was to have pixels in which the kernel would go out of bounds return immediately, leaving them untouched.
+- The convolution kernel used in the gaussian and the sobel filters are the same (just being given different kernels).
+- In this version, each thread uses its id and the block id to determine its own coordinates and any "border pixels" (pixels in which the kernel would be out of bounds) return immediately (being untouched).
+- Afterwards it applies the convolution by going through each neighboring pixel, applying the corresponding kernel weight and then summing it to the new value.
 
 #### min_max
 
@@ -30,19 +29,33 @@ However, following the naive approach and have each thread compare its value, th
 
 #### normalize
 
-In the actual normalization, we simply had the thread get the coordinates of the corresponding pixel (returning immediately if it was a "border pixel") and apply the normalization directly (using the same formula as the CPU version).
+In the actual normalization, we simply had the thread get the coordinates of the corresponding pixel (returning immediately if it was a "border pixel"), applying the normalization and then overwrite it directly in the source matrix.
+
+### Sobel filter
+
+#### Convolutions
+
+For the sobel filter, while the convolution kernel itself was the same as the one used for the gaussian filter, the actual procedure is different, as we applyed the convolution twice (with a horizontal and a vertical kernel), and then merging these results (done in the kernel below).
+
+#### Merge kernels
+
+For the actual merge, we had each thread get its coordinates (returning if it's a "border pixel"), use them to calculate the index of said pixel in both result matrices (c) and finally calculating the hypotenuse (hypot()) of the values of the 2 matrices to get the final, merged, value.
+
+### Non maximum suppression
+
+For the non_maximum suppression, like before, we have each thread calculate its own coordinates, but then use the 2 gradients we calculated before (after_Gx and after_Gy) to determine the angle of the edge (0º, 45º, 90º or 135º). After knowing the direction, we simply compare the pixel to its 2 neighbors to determine whether to keep said pixel as part of the edge (resulting in 1-pixel-thin edges which are much easier to process).
 
 ### First Edges
 
-- The First Edges Function serves as the initial edge detection pass in the Canny algorithm, identifying pixels with gradient magnitudes above the high threshold (tmax) as definitive strong edges. 
+- The First Edges Function serves as the initial edge detection pass in the Canny algorithm, identifying pixels with gradient magnitudes above the high threshold (tmax) as definitive strong edges.
 
-- The ***CPU version** processes pixels sequentially using nested loops, maintaining a linear index c that increments through each row while skipping border pixels by adding 2 at the end of each row. 
+- The ***CPU version** processes pixels sequentially using nested loops, maintaining a linear index c that increments through each row while skipping border pixels by adding 2 at the end of each row.
 
-- The **GPU version** parallelizes this operation by having each CUDA thread handle a single pixel, calculating its position using blockIdx, blockDim, and threadIdx to derive 2D coordinates (x,y) and convert them to a linear index c = x + y * nx. 
+- The **GPU version** parallelizes this operation by having each CUDA thread handle a single pixel, calculating its position using blockIdx, blockDim, and threadIdx to derive 2D coordinates (x,y) and convert them to a linear index c = x + y * nx.
 
-- Both versions apply the same simple logic: if a pixel's non-maximum suppressed gradient value meets or exceeds the high threshold, it's marked as a strong edge by setting its value to MAX_BRIGHTNESS (255) in the reference image. 
+- Both versions apply the same simple logic: if a pixel's non-maximum suppressed gradient value meets or exceeds the high threshold, it's marked as a strong edge by setting its value to MAX_BRIGHTNESS (255) in the reference image.
 
-### Hysteresis Edges 
+### Hysteresis Edges
 
 - The Hysteresis Edges function connects weak edge pixels(above tmin threshold) to existing strong edges through the analysis of the 8 neighbouring pixels, creating strong edge contours.
 
@@ -50,22 +63,7 @@ In the actual normalization, we simply had the thread get the coordinates of the
 
 - The **GPU version** parallelizes this process by having each thread examine one pixel simultaneously, but due to the inherently iterative nature of edge propagation, the kernel must be launched repeatedly from the host until convergence.
 
-- To handle concurrent updates safely, the GPU implementation uses **atomicExch(changed, 1)**, instead of a simple boolean flag, preventing race conditions when multiple threads simultaneously discover they can connect weak edges to strong ones. 
-
-### Sobel filter
-
-#### Convolutions
-
-For the sobel filter, while the convolution kernel itself was the same as the one used for the gaussian filter. However, instead of being applyed once, the sobel filter uses 2 convolutions: one using a horizontal kernel (Gx) and another using a vertical kernel (Gy)
-
-#### Merge kernels
-
-For merging the actual kernels, I simply applied the same formula as the CPU version, only removing the 2 for loops by mapping each thread to a pixel.
-
-### Non maximum suppression
-
-Much like other functions before, this one follows the same formulas and logic as the CPU version, only removing the for loops to iterate every pixel by mapping each thread to a pixel.
-
+- To handle concurrent updates safely, the GPU implementation uses **atomicExch(changed, 1)**, instead of a simple boolean flag, preventing race conditions when multiple threads simultaneously discover they can connect weak edges to strong ones.
 
 ## Performance Evaluation
 
